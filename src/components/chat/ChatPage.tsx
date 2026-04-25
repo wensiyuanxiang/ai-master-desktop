@@ -8,6 +8,17 @@ import { listConversations, createConversation, listMessages, deleteConversation
 import { listen } from "@tauri-apps/api/event";
 import { toast } from "sonner";
 
+function extractError(e: unknown): string {
+  if (typeof e === "string") return e;
+  if (e && typeof e === "object") {
+    const err = e as Record<string, unknown>;
+    if (typeof err.message === "string") return err.message;
+    if (typeof err.error === "string") return err.error;
+    return JSON.stringify(err);
+  }
+  return String(e);
+}
+
 interface Props {
   openPanel: (type: string, props?: Record<string, unknown>) => void;
 }
@@ -56,7 +67,7 @@ export default function ChatPage({ openPanel }: Props) {
       const chunk = event.payload;
       if (chunk.error) {
         setIsStreaming(false);
-        toast.error(chunk.error);
+        toast.error(`API 错误: ${chunk.error}`);
         return;
       }
       if (chunk.is_complete) {
@@ -145,7 +156,7 @@ export default function ChatPage({ openPanel }: Props) {
       await sendMessage(activeId, content);
     } catch (e: any) {
       setIsStreaming(false);
-      toast.error(`发送失败: ${e}`);
+      toast.error(`发送失败: ${extractError(e)}`);
     }
   };
 

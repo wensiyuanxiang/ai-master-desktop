@@ -1,6 +1,7 @@
 use crate::error::{AppError, AppResult};
 use serde::Serialize;
 use tauri::Emitter;
+use tracing::{info, error, warn};
 
 #[derive(Debug, Serialize, Clone)]
 struct StreamChunk {
@@ -10,51 +11,19 @@ struct StreamChunk {
     error: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
-struct AnthropicMessage {
-    role: String,
-    content: Vec<AnthropicContent>,
-}
-
-#[derive(Debug, Serialize)]
-struct AnthropicContent {
-    #[serde(rename = "type")]
-    content_type: String,
-    text: String,
-}
-
-#[derive(Debug, Serialize)]
-struct AnthropicRequest {
-    model: String,
-    max_tokens: u32,
-    system: Option<String>,
-    messages: Vec<AnthropicMessage>,
-    stream: bool,
-}
-
-#[derive(Debug, Serialize)]
-struct OpenAIRequest {
-    model: String,
-    messages: Vec<OpenAIMessage>,
-    stream: bool,
-}
-
-#[derive(Debug, Serialize)]
-struct OpenAIMessage {
-    role: String,
-    content: String,
-}
-
 pub async fn stream_chat(
     app_handle: &tauri::AppHandle,
     conversation_id: String,
     api_key: &str,
     base_url: &str,
     model: &str,
+    api_format: &str,
     system_prompt: Option<String>,
     history: Vec<(String, String)>,
 ) -> AppResult<String> {
-    let is_anthropic = base_url.contains("anthropic.com") || base_url.contains("claude");
+    let is_anthropic = api_format == "anthropic";
+
+    info!(model = %model, base_url = %base_url, api_format = %api_format, "Starting chat stream");
 
     if is_anthropic {
         stream_anthropic(app_handle, conversation_id, api_key, base_url, model, system_prompt, history).await
@@ -73,16 +42,34 @@ async fn stream_anthropic(
     history: Vec<(String, String)>,
 ) -> AppResult<String> {
     let client = reqwest::Client::new();
-    let url = format!("{}/v1/messages", base_url.trim_end_matches('/'));
+    let url = base_url.to_string();
+    info!(url = %url, model = %model, "Calling Anthropic API");
+
+    #[derive(Debug, Serialize)]
+    struct AnthropicMessage {
+        role: String,
+        content: Vec<AnthropicContent>,
+    }
+    #[derive(Debug, Serialize)]
+    struct AnthropicContent {
+        #[serde(rename = "type")]
+        content_type: String,
+        text: String,
+    }
+    #[derive(Debug, Serialize)]
+    struct AnthropicRequest {
+        model: String,
+        max_tokens: u32,
+        system: Option<String>,
+        messages: Vec<AnthropicMessage>,
+        stream: bool,
+    }
 
     let messages: Vec<AnthropicMessage> = history
         .iter()
         .map(|(role, content)| AnthropicMessage {
             role: role.clone(),
-            content: vec![AnthropicContent {
-                content_type: "text".to_string(),
-                text: content.clone(),
-            }],
+            content: vec![AnthropicContent { content_type: "text".to_string(), text: content.clone() }],
         })
         .collect();
 
@@ -102,18 +89,23 @@ async fn stream_anthropic(
         .json(&request)
         .send()
         .await
-        .map_err(|e| AppError::HttpRequest(format!("API request failed: {}. URL: {}", e, url)))?;
+        .map_err(|e| {
+            error!(error = %e, url = %url, "Anthropic request failed");
+            AppError::HttpRequest(format!("Request failed: {}. URL: {}", e, url))
+        })?;
 
     let status = resp.status();
     if !status.is_success() {
         let body = resp.text().await.unwrap_or_default();
-        return Err(AppError::HttpRequest(format!("API error {}: {}", status.as_u16(), body)));
+        error!(status = %status, body = %body, "Anthropic API error");
+        return Err(AppError::HttpRequest(format!("API {} ({})", status.as_u16(), body)));
     }
 
     let mut full_text = String::new();
-
     use futures_util::StreamExt;
     let mut stream = resp.bytes_stream();
+    let mut chunk_count = 0u64;
+
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.map_err(|e| AppError::Stream(e.to_string()))?;
         let text = String::from_utf8_lossy(&chunk);
@@ -127,6 +119,7 @@ async fn stream_anthropic(
                     Some("content_block_delta") => {
                         if let Some(delta) = event["delta"]["text"].as_str() {
                             full_text.push_str(delta);
+                            chunk_count += 1;
                             let _ = app_handle.emit("chat-stream-chunk", StreamChunk {
                                 conversation_id: conversation_id.clone(),
                                 content_delta: delta.to_string(),
@@ -143,12 +136,18 @@ async fn stream_anthropic(
                             error: None,
                         });
                     }
+                    Some("error") => {
+                        let err_msg = event["error"]["message"].as_str().unwrap_or("unknown").to_string();
+                        error!(error = %err_msg, "Anthropic stream error");
+                        return Err(AppError::HttpRequest(err_msg));
+                    }
                     _ => {}
                 }
             }
         }
     }
 
+    info!(chars = full_text.len(), chunks = chunk_count, "Anthropic stream complete");
     Ok(full_text)
 }
 
@@ -162,25 +161,30 @@ async fn stream_openai_compatible(
     history: Vec<(String, String)>,
 ) -> AppResult<String> {
     let client = reqwest::Client::new();
-    let url = format!("{}/v1/chat/completions", base_url.trim_end_matches('/'));
+    let url = base_url.to_string();
+    info!(url = %url, model = %model, "Calling OpenAI-compatible API");
+
+    #[derive(Debug, Serialize)]
+    struct OpenAIMessage { role: String, content: String }
+    #[derive(Debug, Serialize)]
+    struct OpenAIRequest {
+        model: String,
+        messages: Vec<OpenAIMessage>,
+        stream: bool,
+    }
 
     let mut messages: Vec<OpenAIMessage> = Vec::new();
     if let Some(sp) = system_prompt {
-        messages.push(OpenAIMessage {
-            role: "system".to_string(),
-            content: sp,
-        });
+        messages.push(OpenAIMessage { role: "system".to_string(), content: sp });
     }
     for (role, content) in history {
-        let mapped_role = if role == "assistant" { "assistant" } else { "user" };
-        messages.push(OpenAIMessage { role: mapped_role.to_string(), content });
+        let mapped = if role == "assistant" { "assistant" } else { "user" };
+        messages.push(OpenAIMessage { role: mapped.to_string(), content });
     }
 
-    let request = OpenAIRequest {
-        model: model.to_string(),
-        messages,
-        stream: true,
-    };
+    let request = OpenAIRequest { model: model.to_string(), messages, stream: true };
+
+    info!(url = %url, model = %model, msg_count = request.messages.len(), "Sending OpenAI request");
 
     let resp = client
         .post(&url)
@@ -190,19 +194,22 @@ async fn stream_openai_compatible(
         .send()
         .await
         .map_err(|e| {
-            AppError::HttpRequest(format!("API request failed: {}. URL: {}", e, url))
+            error!(error = %e, url = %url, "OpenAI request failed");
+            AppError::HttpRequest(format!("Request failed: {}. URL: {}", e, url))
         })?;
 
     let status = resp.status();
     if !status.is_success() {
         let body = resp.text().await.unwrap_or_default();
-        return Err(AppError::HttpRequest(format!("API error {}: {}", status.as_u16(), body)));
+        error!(status = %status, body = %body, "OpenAI API error");
+        return Err(AppError::HttpRequest(format!("API {}: {}", status.as_u16(), body)));
     }
 
     let mut full_text = String::new();
-
     use futures_util::StreamExt;
     let mut stream = resp.bytes_stream();
+    let mut chunk_count = 0u64;
+
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.map_err(|e| AppError::Stream(e.to_string()))?;
         let text = String::from_utf8_lossy(&chunk);
@@ -216,13 +223,21 @@ async fn stream_openai_compatible(
                     is_complete: true,
                     error: None,
                 });
-                continue;
+                info!(chars = full_text.len(), chunks = chunk_count, "Stream complete");
+                return Ok(full_text);
             }
 
             if let Ok(event) = serde_json::from_str::<serde_json::Value>(data) {
+                // Check for error in response
+                if let Some(err) = event.get("error") {
+                    let err_msg = err.get("message").and_then(|m| m.as_str()).unwrap_or("unknown error");
+                    error!(error = %err_msg, "API stream error");
+                    return Err(AppError::HttpRequest(err_msg.to_string()));
+                }
                 if let Some(choices) = event["choices"].as_array() {
                     if let Some(delta) = choices[0]["delta"]["content"].as_str() {
                         full_text.push_str(delta);
+                        chunk_count += 1;
                         let _ = app_handle.emit("chat-stream-chunk", StreamChunk {
                             conversation_id: conversation_id.clone(),
                             content_delta: delta.to_string(),
@@ -235,5 +250,6 @@ async fn stream_openai_compatible(
         }
     }
 
+    info!(chars = full_text.len(), chunks = chunk_count, "OpenAI stream complete");
     Ok(full_text)
 }

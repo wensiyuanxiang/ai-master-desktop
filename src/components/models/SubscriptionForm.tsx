@@ -27,6 +27,7 @@ export default function SubscriptionForm({ id, subscription, onSaved, onCancel }
   const [model, setModel] = useState(subscription?.model || "");
   const [startDate, setStartDate] = useState(subscription?.start_date || "");
   const [endDate, setEndDate] = useState(subscription?.end_date || "");
+  const [apiFormat, setApiFormat] = useState(subscription?.api_format || "openai");
   const [showKey, setShowKey] = useState(false);
   const [saving, setSaving] = useState(false);
 
@@ -43,11 +44,12 @@ export default function SubscriptionForm({ id, subscription, onSaved, onCancel }
           api_key: apiKey || undefined,
           base_url: baseUrl || undefined,
           model: model || undefined,
+          api_format: apiFormat || undefined,
           start_date: startDate || null,
           end_date: endDate || null,
         });
       } else {
-        await createSubscription({ provider_id: providerId, name, api_key: apiKey, base_url: baseUrl, model, start_date: startDate || null, end_date: endDate || null });
+        await createSubscription({ provider_id: providerId, name, api_key: apiKey, base_url: baseUrl, model, api_format: apiFormat, start_date: startDate || null, end_date: endDate || null });
       }
       toast.success(id ? "套餐已更新" : "套餐已创建");
       onSaved();
@@ -83,13 +85,28 @@ export default function SubscriptionForm({ id, subscription, onSaved, onCancel }
         </div>
       </div>
       <div>
-        <label style={labelStyle}>Base URL</label>
-        <input type="text" value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://api.anthropic.com" style={inputStyle} onFocus={(e) => { e.currentTarget.style.borderColor = "var(--accent)"; }} onBlur={(e) => { e.currentTarget.style.borderColor = "var(--border-primary)"; }} />
+        <label style={labelStyle}>API 地址 (完整端点)</label>
+        <input type="text" value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)}
+          placeholder={apiFormat === "anthropic" ? "https://api.anthropic.com/v1/messages" : "https://api.deepseek.com/v1/chat/completions"}
+          style={inputStyle} onFocus={focusBorder} onBlur={blurBorder}
+        />
+        <p style={{ fontSize: 9, color: "var(--text-muted)", marginTop: 2 }}>
+          {apiFormat === "anthropic" ? "例: https://api.anthropic.com/v1/messages 或 https://api.deepseek.com/anthropic/messages" : "例: https://api.deepseek.com/v1/chat/completions"}
+        </p>
       </div>
       <div>
         <label style={labelStyle}>模型名</label>
-        <input type="text" value={model} onChange={(e) => setModel(e.target.value)} placeholder="claude-sonnet-4-6" style={inputStyle} onFocus={(e) => { e.currentTarget.style.borderColor = "var(--accent)"; }} onBlur={(e) => { e.currentTarget.style.borderColor = "var(--border-primary)"; }} />
+        <input type="text" value={model} onChange={(e) => setModel(e.target.value)} placeholder="claude-sonnet-4-6 或 deepseek-chat" style={inputStyle} onFocus={focusBorder} onBlur={blurBorder} />
       </div>
+      <div>
+        <label style={labelStyle}>API 格式</label>
+        <select value={apiFormat} onChange={(e) => setApiFormat(e.target.value)} style={inputStyle}>
+          <option value="openai">OpenAI 兼容 (chat/completions)</option>
+          <option value="anthropic">Anthropic (messages API)</option>
+        </select>
+        <p style={{ fontSize: 9, color: "var(--text-muted)", marginTop: 2 }}>仅影响请求体的 JSON 格式，不影响 URL</p>
+      </div>
+
       <div>
         <label style={labelStyle}>订阅周期 (可选)</label>
         <div style={{ display: "flex", gap: 8 }}>
@@ -118,3 +135,6 @@ export default function SubscriptionForm({ id, subscription, onSaved, onCancel }
     </div>
   );
 }
+
+function focusBorder(e: React.FocusEvent<HTMLInputElement | HTMLSelectElement>) { e.currentTarget.style.borderColor = "var(--accent)"; }
+function blurBorder(e: React.FocusEvent<HTMLInputElement | HTMLSelectElement>) { e.currentTarget.style.borderColor = "var(--border-primary)"; }

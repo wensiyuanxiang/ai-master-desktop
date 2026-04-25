@@ -5,6 +5,7 @@ export interface Subscription {
   api_key_masked: string;
   base_url: string;
   model: string;
+  api_format: string;
   start_date: string | null;
   end_date: string | null;
   is_active: boolean;
@@ -18,6 +19,7 @@ export interface CreateSubscriptionInput {
   api_key: string;
   base_url: string;
   model: string;
+  api_format?: string;
   start_date: string | null;
   end_date: string | null;
 }
@@ -28,6 +30,7 @@ export interface UpdateSubscriptionInput {
   api_key?: string;
   base_url?: string;
   model?: string;
+  api_format?: string;
   start_date?: string | null;
   end_date?: string | null;
 }

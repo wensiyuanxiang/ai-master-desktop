@@ -4,10 +4,15 @@ mod error;
 mod services;
 
 use tauri::Manager;
-use tracing_subscriber;
+use tracing_subscriber::fmt::format::FmtSpan;
 
 pub fn run() {
-    tracing_subscriber::fmt::init();
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::INFO)
+        .with_span_events(FmtSpan::NEW | FmtSpan::CLOSE)
+        .with_target(false)
+        .with_writer(std::io::stderr)
+        .init();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_sql::Builder::default().build())

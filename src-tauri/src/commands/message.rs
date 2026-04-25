@@ -77,10 +77,10 @@ pub fn send_message(
         let subscription_id = subscription_id
             .ok_or_else(|| AppError::Validation("No subscription selected".to_string()))?;
 
-        let (api_key_encrypted, base_url, model): (String, String, String) = conn.query_row(
-            "SELECT api_key_encrypted, base_url, model FROM subscriptions WHERE id = ?1",
+        let (api_key_encrypted, base_url, model, api_format): (String, String, String, String) = conn.query_row(
+            "SELECT api_key_encrypted, base_url, model, api_format FROM subscriptions WHERE id = ?1",
             [&subscription_id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         )?;
 
         let api_key = crate::services::crypto::decrypt(&api_key_encrypted, &state.crypto_key)?;
@@ -118,9 +118,9 @@ pub fn send_message(
             api_key,
             base_url,
             model,
+            api_format,
             system_prompt,
             history,
-            user_msg_id: user_msg_id.clone(),
         }
     };
     let app = app_handle.clone();
@@ -134,6 +134,7 @@ pub fn send_message(
             &ctx.api_key,
             &ctx.base_url,
             &ctx.model,
+            &ctx.api_format,
             ctx.system_prompt,
             ctx.history,
         )
@@ -189,7 +190,7 @@ struct ChatContext {
     api_key: String,
     base_url: String,
     model: String,
+    api_format: String,
     system_prompt: Option<String>,
     history: Vec<(String, String)>,
-    user_msg_id: String,
 }

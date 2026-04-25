@@ -5,6 +5,10 @@ use serde::{Deserialize, Serialize};
 use tauri::State;
 use uuid::Uuid;
 
+const SELECT_FIELDS: &str =
+    "id, provider_id, name, api_key_encrypted, base_url, model, \
+     start_date, end_date, api_format, is_active, created_at, updated_at";
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Subscription {
     pub id: String,
@@ -13,6 +17,7 @@ pub struct Subscription {
     pub api_key_masked: String,
     pub base_url: String,
     pub model: String,
+    pub api_format: String,
     pub start_date: Option<String>,
     pub end_date: Option<String>,
     pub is_active: bool,
@@ -27,6 +32,7 @@ pub struct CreateSubscriptionInput {
     pub api_key: String,
     pub base_url: String,
     pub model: String,
+    pub api_format: Option<String>,
     pub start_date: Option<String>,
     pub end_date: Option<String>,
 }
@@ -38,15 +44,14 @@ pub struct UpdateSubscriptionInput {
     pub api_key: Option<String>,
     pub base_url: Option<String>,
     pub model: Option<String>,
+    pub api_format: Option<String>,
     pub start_date: Option<String>,
     pub end_date: Option<String>,
 }
 
 fn mask_api_key(key: &str) -> String {
-    if key.len() <= 8 {
-        return "****".to_string();
-    }
-    format!("{}****{}", &key[..4], &key[key.len() - 4..])
+    if key.len() <= 8 { "****".to_string() }
+    else { format!("{}****{}", &key[..4], &key[key.len() - 4..]) }
 }
 
 fn row_to_subscription(row: &rusqlite::Row) -> rusqlite::Result<Subscription> {
@@ -60,9 +65,10 @@ fn row_to_subscription(row: &rusqlite::Row) -> rusqlite::Result<Subscription> {
         model: row.get(5)?,
         start_date: row.get(6)?,
         end_date: row.get(7)?,
-        is_active: row.get::<_, i32>(8)? != 0,
-        created_at: row.get(9)?,
-        updated_at: row.get(10)?,
+        api_format: row.get(8)?,
+        is_active: row.get::<_, i32>(9)? != 0,
+        created_at: row.get(10)?,
+        updated_at: row.get(11)?,
     })
 }
 
@@ -73,44 +79,37 @@ pub fn list_subscriptions(
     search: Option<String>,
 ) -> AppResult<Vec<Subscription>> {
     let conn = db::open_connection(&app_handle)?;
-
-    let sql = if provider_id.is_some() && search.is_some() {
-        "SELECT id, provider_id, name, api_key_encrypted, base_url, model, \
-         start_date, end_date, is_active, created_at, updated_at \
-         FROM subscriptions WHERE provider_id = ?1 AND (name LIKE ?2 OR model LIKE ?3) ORDER BY updated_at DESC"
-    } else if provider_id.is_some() {
-        "SELECT id, provider_id, name, api_key_encrypted, base_url, model, \
-         start_date, end_date, is_active, created_at, updated_at \
-         FROM subscriptions WHERE provider_id = ?1 ORDER BY updated_at DESC"
-    } else if search.is_some() {
-        "SELECT id, provider_id, name, api_key_encrypted, base_url, model, \
-         start_date, end_date, is_active, created_at, updated_at \
-         FROM subscriptions WHERE name LIKE ?1 OR model LIKE ?1 ORDER BY updated_at DESC"
-    } else {
-        "SELECT id, provider_id, name, api_key_encrypted, base_url, model, \
-         start_date, end_date, is_active, created_at, updated_at \
-         FROM subscriptions ORDER BY updated_at DESC"
-    };
-
-    let mut stmt = conn.prepare(sql)?;
+    let sql = build_list_sql(&provider_id, &search);
+    let mut stmt = conn.prepare(&sql)?;
 
     let subs = if let (Some(pid), Some(s)) = (&provider_id, &search) {
-        let pattern = format!("%{}%", s);
-        stmt.query_map(rusqlite::params![pid.as_str(), pattern.clone(), pattern], row_to_subscription)?
+        let p = format!("%{}%", s);
+        stmt.query_map(rusqlite::params![pid.as_str(), p.clone(), p], row_to_subscription)?
             .collect::<Result<Vec<_>, _>>()?
     } else if let Some(pid) = &provider_id {
         stmt.query_map(rusqlite::params![pid.as_str()], row_to_subscription)?
             .collect::<Result<Vec<_>, _>>()?
     } else if let Some(s) = &search {
-        let pattern = format!("%{}%", s);
-        stmt.query_map(rusqlite::params![pattern], row_to_subscription)?
+        let p = format!("%{}%", s);
+        stmt.query_map(rusqlite::params![p], row_to_subscription)?
             .collect::<Result<Vec<_>, _>>()?
     } else {
         stmt.query_map([], row_to_subscription)?
             .collect::<Result<Vec<_>, _>>()?
     };
-
     Ok(subs)
+}
+
+fn build_list_sql(provider_id: &Option<String>, search: &Option<String>) -> String {
+    let mut sql = format!("SELECT {} FROM subscriptions", SELECT_FIELDS);
+    let mut has_where = false;
+    if provider_id.is_some() { sql.push_str(" WHERE provider_id = ?1"); has_where = true; }
+    if search.is_some() {
+        if has_where { sql.push_str(" AND (name LIKE ?2 OR model LIKE ?3)"); }
+        else { sql.push_str(" WHERE (name LIKE ?1 OR model LIKE ?1)"); }
+    }
+    sql.push_str(" ORDER BY updated_at DESC");
+    sql
 }
 
 #[tauri::command]
@@ -121,24 +120,16 @@ pub fn create_subscription(
 ) -> AppResult<Subscription> {
     let conn = db::open_connection(&app_handle)?;
     let id = Uuid::new_v4().to_string();
-    let api_key_encrypted = crypto::encrypt(&input.api_key, &state.crypto_key)?;
+    let encrypted = crypto::encrypt(&input.api_key, &state.crypto_key)?;
+    let api_format = input.api_format.unwrap_or_else(|| "openai".to_string());
 
     conn.execute(
-        "INSERT INTO subscriptions (id, provider_id, name, api_key_encrypted, base_url, model, start_date, end_date) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-        rusqlite::params![
-            id, input.provider_id, input.name, api_key_encrypted,
-            input.base_url, input.model, input.start_date, input.end_date
-        ],
+        "INSERT INTO subscriptions (id, provider_id, name, api_key_encrypted, base_url, model, api_format, start_date, end_date) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        rusqlite::params![id, input.provider_id, input.name, encrypted, input.base_url, input.model, api_format, input.start_date, input.end_date],
     )?;
 
-    Ok(conn.query_row(
-        "SELECT id, provider_id, name, api_key_encrypted, base_url, model, \
-         start_date, end_date, is_active, created_at, updated_at \
-         FROM subscriptions WHERE id = ?1",
-        [&id],
-        row_to_subscription,
-    )?)
+    query_by_id(&conn, &id)
 }
 
 #[tauri::command]
@@ -150,57 +141,26 @@ pub fn update_subscription(
 ) -> AppResult<Subscription> {
     let conn = db::open_connection(&app_handle)?;
 
-    if let Some(ref provider_id) = input.provider_id {
-        conn.execute(
-            "UPDATE subscriptions SET provider_id = ?1, updated_at = datetime('now') WHERE id = ?2",
-            rusqlite::params![provider_id, id],
-        )?;
+    macro_rules! update_field {
+        ($field:expr, $val:expr) => {
+            if let Some(ref v) = $val {
+                conn.execute(&format!("UPDATE subscriptions SET {} = ?1, updated_at = datetime('now') WHERE id = ?2", $field), rusqlite::params![v, id])?;
+            }
+        };
     }
-    if let Some(ref name) = input.name {
-        conn.execute(
-            "UPDATE subscriptions SET name = ?1, updated_at = datetime('now') WHERE id = ?2",
-            rusqlite::params![name, id],
-        )?;
-    }
+    update_field!("provider_id", input.provider_id);
+    update_field!("name", input.name);
     if let Some(ref api_key) = input.api_key {
-        let encrypted = crypto::encrypt(api_key, &state.crypto_key)?;
-        conn.execute(
-            "UPDATE subscriptions SET api_key_encrypted = ?1, updated_at = datetime('now') WHERE id = ?2",
-            rusqlite::params![encrypted, id],
-        )?;
+        let enc = crypto::encrypt(api_key, &state.crypto_key)?;
+        conn.execute("UPDATE subscriptions SET api_key_encrypted = ?1, updated_at = datetime('now') WHERE id = ?2", rusqlite::params![enc, id])?;
     }
-    if let Some(ref base_url) = input.base_url {
-        conn.execute(
-            "UPDATE subscriptions SET base_url = ?1, updated_at = datetime('now') WHERE id = ?2",
-            rusqlite::params![base_url, id],
-        )?;
-    }
-    if let Some(ref model) = input.model {
-        conn.execute(
-            "UPDATE subscriptions SET model = ?1, updated_at = datetime('now') WHERE id = ?2",
-            rusqlite::params![model, id],
-        )?;
-    }
-    if let Some(ref start_date) = input.start_date {
-        conn.execute(
-            "UPDATE subscriptions SET start_date = ?1, updated_at = datetime('now') WHERE id = ?2",
-            rusqlite::params![start_date, id],
-        )?;
-    }
-    if let Some(ref end_date) = input.end_date {
-        conn.execute(
-            "UPDATE subscriptions SET end_date = ?1, updated_at = datetime('now') WHERE id = ?2",
-            rusqlite::params![end_date, id],
-        )?;
-    }
+    update_field!("base_url", input.base_url);
+    update_field!("model", input.model);
+    update_field!("api_format", input.api_format);
+    update_field!("start_date", input.start_date);
+    update_field!("end_date", input.end_date);
 
-    Ok(conn.query_row(
-        "SELECT id, provider_id, name, api_key_encrypted, base_url, model, \
-         start_date, end_date, is_active, created_at, updated_at \
-         FROM subscriptions WHERE id = ?1",
-        [&id],
-        row_to_subscription,
-    )?)
+    query_by_id(&conn, &id)
 }
 
 #[tauri::command]
@@ -211,39 +171,28 @@ pub fn delete_subscription(app_handle: tauri::AppHandle, id: String) -> AppResul
 }
 
 #[tauri::command]
-pub fn set_active_subscription(
-    app_handle: tauri::AppHandle,
-    id: String,
-) -> AppResult<Subscription> {
+pub fn set_active_subscription(app_handle: tauri::AppHandle, id: String) -> AppResult<Subscription> {
     let conn = db::open_connection(&app_handle)?;
     conn.execute("UPDATE subscriptions SET is_active = 0", [])?;
-    conn.execute(
-        "UPDATE subscriptions SET is_active = 1 WHERE id = ?1",
-        rusqlite::params![id],
-    )?;
-
-    Ok(conn.query_row(
-        "SELECT id, provider_id, name, api_key_encrypted, base_url, model, \
-         start_date, end_date, is_active, created_at, updated_at \
-         FROM subscriptions WHERE id = ?1",
-        [&id],
-        row_to_subscription,
-    )?)
+    conn.execute("UPDATE subscriptions SET is_active = 1 WHERE id = ?1", rusqlite::params![id])?;
+    query_by_id(&conn, &id)
 }
 
 #[tauri::command]
 pub fn get_active_subscription(app_handle: tauri::AppHandle) -> AppResult<Option<Subscription>> {
     let conn = db::open_connection(&app_handle)?;
-    let result = conn.query_row(
-        "SELECT id, provider_id, name, api_key_encrypted, base_url, model, \
-         start_date, end_date, is_active, created_at, updated_at \
-         FROM subscriptions WHERE is_active = 1 LIMIT 1",
+    match conn.query_row(
+        &format!("SELECT {} FROM subscriptions WHERE is_active = 1 LIMIT 1", SELECT_FIELDS),
         [],
         row_to_subscription,
-    );
-    match result {
-        Ok(sub) => Ok(Some(sub)),
+    ) {
+        Ok(s) => Ok(Some(s)),
         Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
         Err(e) => Err(AppError::Database(e)),
     }
+}
+
+fn query_by_id(conn: &rusqlite::Connection, id: &str) -> AppResult<Subscription> {
+    let sql = format!("SELECT {} FROM subscriptions WHERE id = ?1", SELECT_FIELDS);
+    Ok(conn.query_row(&sql, [id], row_to_subscription)?)
 }

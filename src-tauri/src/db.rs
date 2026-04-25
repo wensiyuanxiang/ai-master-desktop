@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS subscriptions (
     model TEXT NOT NULL DEFAULT '',
     start_date TEXT,
     end_date TEXT,
+    api_format TEXT NOT NULL DEFAULT 'openai',
     is_active INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -91,6 +92,10 @@ pub fn init_db(app_handle: &tauri::AppHandle) -> AppResult<()> {
     conn.execute_batch("PRAGMA journal_mode=WAL;")?;
     conn.execute_batch("PRAGMA foreign_keys=ON;")?;
     conn.execute_batch(MIGRATION_SQL)?;
+    // Migration: add api_format for existing databases
+    conn.execute_batch(
+        "ALTER TABLE subscriptions ADD COLUMN api_format TEXT NOT NULL DEFAULT 'openai';"
+    ).ok();
     conn.execute_batch(SEED_PROVIDERS_SQL)?;
 
     Ok(())
