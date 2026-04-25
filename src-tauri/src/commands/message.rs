@@ -126,8 +126,8 @@ pub fn send_message(
     let app = app_handle.clone();
     let cid = conversation_id.clone();
 
-    // Spawn background task for streaming - returns immediately
-    tokio::spawn(async move {
+    // Spawn background task using Tauri's async runtime
+    tauri::async_runtime::spawn(async move {
         let result = crate::services::stream_chat::stream_chat(
             &app,
             cid.clone(),
