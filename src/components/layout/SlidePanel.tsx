@@ -1,56 +1,81 @@
 import { useEffect, type ReactNode } from "react";
 import { X } from "lucide-react";
-import { cn } from "@/lib/utils";
 
-export interface SlidePanelProps {
-  content: { type: string; props?: Record<string, unknown> } | null;
+interface Props {
+  isOpen: boolean;
   onClose: () => void;
   children?: ReactNode;
+  title?: string;
 }
 
-export default function SlidePanel({ content, onClose, children }: SlidePanelProps) {
+export default function SlidePanel({ isOpen, onClose, children, title }: Props) {
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape" && content) onClose();
+      if (e.key === "Escape" && isOpen) onClose();
     }
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [content, onClose]);
-
-  const isOpen = content !== null;
+  }, [isOpen, onClose]);
 
   return (
     <>
       <div
-        className={cn(
-          "fixed inset-0 z-40 bg-black/50 transition-opacity",
-          isOpen ? "opacity-100" : "pointer-events-none opacity-0"
-        )}
         onClick={onClose}
+        style={{
+          position: "fixed",
+          inset: 0,
+          zIndex: 40,
+          background: "rgba(0,0,0,0.4)",
+          opacity: isOpen ? 1 : 0,
+          pointerEvents: isOpen ? "auto" : "none",
+          transition: "opacity 0.2s",
+        }}
       />
       <div
-        className={cn(
-          "fixed right-0 top-0 z-50 h-full w-[360px] border-l border-gray-800 bg-gray-900 shadow-2xl transition-transform duration-200 ease-out",
-          isOpen ? "translate-x-0" : "translate-x-full"
-        )}
+        style={{
+          position: "fixed",
+          right: 0,
+          top: 0,
+          zIndex: 50,
+          height: "100%",
+          width: 380,
+          background: "var(--bg-secondary)",
+          borderLeft: "1px solid var(--border-primary)",
+          transform: isOpen ? "translateX(0)" : "translateX(100%)",
+          transition: "transform 0.2s cubic-bezier(0.16, 1, 0.3, 1)",
+          display: "flex",
+          flexDirection: "column",
+        }}
       >
-        <div className="flex h-full flex-col">
-          <div className="flex items-center justify-between border-b border-gray-800 px-4 py-3">
-            <h3 className="text-sm font-medium text-gray-200">
-              {content?.type === "roleLibrary" && "角色库"}
-              {content?.type === "roleForm" && (content?.props?.id ? "编辑角色" : "添加角色")}
-              {content?.type === "toolConfig" && (content?.props?.tool as { display_name?: string })?.display_name || "工具配置"}
-              {content?.type === "subscriptionForm" && (content?.props?.id ? "编辑套餐" : "添加套餐")}
-            </h3>
-            <button
-              onClick={onClose}
-              className="rounded p-1 text-gray-500 hover:bg-gray-800 hover:text-gray-300"
-            >
-              <X className="h-4 w-4" />
-            </button>
-          </div>
-          <div className="flex-1 overflow-y-auto">{children}</div>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            padding: "12px 16px",
+            borderBottom: "1px solid var(--border-primary)",
+            flexShrink: 0,
+          }}
+        >
+          <span style={{ fontSize: 13, fontWeight: 500, color: "var(--text-primary)" }}>
+            {title || ""}
+          </span>
+          <button
+            onClick={onClose}
+            style={{
+              background: "none",
+              border: "none",
+              color: "var(--text-muted)",
+              cursor: "pointer",
+              padding: 4,
+              borderRadius: 4,
+              display: "flex",
+            }}
+          >
+            <X size={14} />
+          </button>
         </div>
+        <div style={{ flex: 1, overflowY: "auto", padding: 16 }}>{children}</div>
       </div>
     </>
   );

@@ -1,17 +1,37 @@
-export default function StatusBar() {
-  const activeSub = "Claude Pro";
-  const activeModel = "Sonnet 4.6";
-  const activeRole = "Python 专家";
+interface StatusBarProps {
+  subName?: string;
+  modelName?: string;
+}
 
+export default function StatusBar({ subName, modelName }: StatusBarProps) {
+  const hasActive = !!subName;
   return (
-    <div className="flex h-7 items-center justify-between border-t border-gray-800 bg-gray-900 px-3 text-xs text-gray-500">
-      <div className="flex items-center gap-2">
-        <span className="h-2 w-2 rounded-full bg-green-500" />
-        <span>
-          {activeSub} ({activeModel})
-        </span>
+    <div
+      style={{
+        height: 26,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        padding: "0 12px",
+        borderTop: "1px solid var(--border-primary)",
+        background: "var(--bg-secondary)",
+        fontSize: 11,
+        color: "var(--text-muted)",
+        flexShrink: 0,
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+        <span
+          style={{
+            width: 7,
+            height: 7,
+            borderRadius: "50%",
+            background: hasActive ? "var(--green)" : "var(--text-muted)",
+            display: "inline-block",
+          }}
+        />
+        {hasActive ? `${subName} (${modelName})` : "未激活套餐"}
       </div>
-      <span>角色: {activeRole}</span>
     </div>
   );
 }

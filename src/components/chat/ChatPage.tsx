@@ -1,181 +1,240 @@
-import { useState, useEffect, useCallback } from "react";
-import { Plus, Library } from "lucide-react";
+import { useState, useEffect, useCallback, useRef } from "react";
+import { Plus } from "lucide-react";
 import ConversationList from "./ConversationList";
 import ChatArea from "./ChatArea";
 import type { Conversation } from "@/types/conversation";
 import type { Message, StreamChunk } from "@/types/message";
-import { listConversations, createConversation, listMessages } from "@/lib/tauri";
+import { listConversations, createConversation, listMessages, deleteConversation, renameConversation, sendMessage } from "@/lib/tauri";
 import { listen } from "@tauri-apps/api/event";
+import { toast } from "sonner";
 
-interface ChatPageProps {
+interface Props {
   openPanel: (type: string, props?: Record<string, unknown>) => void;
 }
 
-export default function ChatPage({ openPanel }: ChatPageProps) {
+export default function ChatPage({ openPanel }: Props) {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [streamingText, setStreamingText] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
-  const [_loading, setLoading] = useState(false);
+  const streamRef = useRef({ text: "", convId: "" });
+  const unlistenRef = useRef<(() => void) | null>(null);
 
   const loadConversations = useCallback(async () => {
     try {
       const convs = await listConversations();
       setConversations(convs);
     } catch (e) {
-      console.error("Failed to load conversations:", e);
+      console.error("loadConversations:", e);
     }
   }, []);
 
-  const loadMessages = useCallback(async (conversationId: string) => {
+  const loadMessages = useCallback(async (id: string) => {
     try {
-      const msgs = await listMessages(conversationId);
+      const msgs = await listMessages(id);
       setMessages(msgs);
     } catch (e) {
-      console.error("Failed to load messages:", e);
+      console.error("loadMessages:", e);
     }
   }, []);
 
-  useEffect(() => {
-    loadConversations();
-  }, [loadConversations]);
+  // Initial load
+  useEffect(() => { loadConversations(); }, [loadConversations]);
 
+  // Load messages when active conversation changes
   useEffect(() => {
     if (activeId) loadMessages(activeId);
+    else setMessages([]);
   }, [activeId, loadMessages]);
 
+  // Set up streaming event listener
   useEffect(() => {
-    const unlisten = listen<StreamChunk>("chat-stream-chunk", (event) => {
+    let mounted = true;
+    listen<StreamChunk>("chat-stream-chunk", (event) => {
+      if (!mounted) return;
       const chunk = event.payload;
       if (chunk.error) {
         setIsStreaming(false);
-        setStreamingText("");
+        toast.error(chunk.error);
         return;
       }
       if (chunk.is_complete) {
         setIsStreaming(false);
-        setStreamingText((prev) => {
-          // Save the completed message
-          const assistantMsg: Message = {
-            id: `tmp-${Date.now()}`,
-            conversation_id: activeId || "",
-            role: "assistant",
-            content: prev,
-            created_at: new Date().toISOString(),
-          };
-          setMessages((msgs) => [...msgs, assistantMsg]);
-          return "";
-        });
-        if (activeId) loadMessages(activeId);
+        // Reload messages from DB to get the saved assistant message
+        if (chunk.conversation_id) {
+          loadMessages(chunk.conversation_id);
+          loadConversations(); // refresh title
+        }
       } else {
-        setStreamingText((prev) => prev + chunk.content_delta);
+        streamRef.current.text += chunk.content_delta;
+        setStreamingText(streamRef.current.text);
       }
-    });
-    return () => { unlisten.then((fn) => fn()); };
-  }, [activeId, loadMessages]);
+    }).then((fn) => { unlistenRef.current = fn; });
+    return () => {
+      mounted = false;
+      unlistenRef.current?.();
+    };
+  }, [loadMessages, loadConversations]);
+
+  // Re-setup listener when activeId changes (to track the right conversation)
+  useEffect(() => {
+    if (activeId) {
+      streamRef.current = { text: "", convId: activeId };
+    }
+  }, [activeId]);
 
   const handleNewConversation = async () => {
     try {
-      const convo = await createConversation({});
+      const { getActiveSubscription } = await import("@/lib/tauri");
+      let activeSub = null;
+      try { activeSub = await getActiveSubscription(); } catch { /* */ }
+      const convo = await createConversation({
+        subscription_id: activeSub?.id,
+      });
       setConversations((prev) => [convo, ...prev]);
       setActiveId(convo.id);
-      setMessages([]);
     } catch (e) {
-      console.error("Failed to create conversation:", e);
+      toast.error("创建对话失败");
     }
   };
 
-  const handleSelectConversation = (id: string) => {
+  const handleSelect = (id: string) => {
     setActiveId(id);
+    streamRef.current = { text: "", convId: id };
     setStreamingText("");
+    setIsStreaming(false);
   };
 
-  const handleDeleteConversation = async (id: string) => {
+  const handleDelete = async (id: string) => {
     try {
-      const { deleteConversation } = await import("@/lib/tauri");
       await deleteConversation(id);
       setConversations((prev) => prev.filter((c) => c.id !== id));
-      if (activeId === id) {
-        setActiveId(null);
-        setMessages([]);
-      }
+      if (activeId === id) setActiveId(null);
     } catch (e) {
-      console.error("Failed to delete conversation:", e);
+      toast.error("删除失败");
     }
   };
 
-  const handleRenameConversation = async (id: string, title: string) => {
+  const handleRename = async (id: string, title: string) => {
     try {
-      const { renameConversation } = await import("@/lib/tauri");
       await renameConversation(id, title);
-      setConversations((prev) =>
-        prev.map((c) => (c.id === id ? { ...c, title } : c))
-      );
+      setConversations((prev) => prev.map((c) => c.id === id ? { ...c, title } : c));
     } catch (e) {
-      console.error("Failed to rename:", e);
+      toast.error("重命名失败");
     }
   };
 
   const handleSend = async (content: string) => {
     if (!activeId || !content.trim()) return;
+    // Add user message to UI optimistically
+    const userMsg: Message = {
+      id: `user-${Date.now()}`,
+      conversation_id: activeId,
+      role: "user",
+      content,
+      created_at: new Date().toISOString(),
+    };
+    setMessages((prev) => [...prev, userMsg]);
+    setStreamingText("");
+    streamRef.current = { text: "", convId: activeId };
+    setIsStreaming(true);
+
     try {
-      const userMsg: Message = {
-        id: `tmp-${Date.now()}`,
-        conversation_id: activeId,
-        role: "user",
-        content,
-        created_at: new Date().toISOString(),
-      };
-      setMessages((prev) => [...prev, userMsg]);
-      setIsStreaming(true);
-      setStreamingText("");
-      setLoading(true);
-      const { sendMessage } = await import("@/lib/tauri");
+      // Fire-and-forget - response handled by event listener
       await sendMessage(activeId, content);
-      setLoading(false);
-    } catch (e) {
-      console.error("Failed to send:", e);
+    } catch (e: any) {
       setIsStreaming(false);
-      setLoading(false);
+      toast.error(`发送失败: ${e}`);
     }
   };
 
   return (
-    <div className="flex h-full">
-      <div className="flex w-[240px] flex-col border-r border-gray-800">
-        <div className="flex items-center justify-between px-3 py-3">
+    <div style={{ display: "flex", height: "100%" }}>
+      {/* Left: conversation list */}
+      <div style={{
+        width: 220,
+        display: "flex",
+        flexDirection: "column",
+        borderRight: "1px solid var(--border-primary)",
+        background: "var(--bg-secondary)",
+        flexShrink: 0,
+      }}>
+        <div style={{ padding: "10px 12px" }}>
           <button
             onClick={handleNewConversation}
-            className="flex items-center gap-1.5 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700"
+            style={{
+              width: "100%",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 6,
+              padding: "6px 0",
+              borderRadius: 6,
+              border: "1px solid var(--border-secondary)",
+              background: "var(--bg-tertiary)",
+              color: "var(--text-primary)",
+              fontSize: 12,
+              cursor: "pointer",
+              transition: "all 0.15s",
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.borderColor = "var(--accent)"; }}
+            onMouseLeave={(e) => { e.currentTarget.style.borderColor = "var(--border-secondary)"; }}
           >
-            <Plus className="h-3.5 w-3.5" />
-            新建对话
+            <Plus size={14} /> 新建对话
           </button>
         </div>
         <ConversationList
           conversations={conversations}
           activeId={activeId}
-          onSelect={handleSelectConversation}
-          onRename={handleRenameConversation}
-          onDelete={handleDeleteConversation}
+          onSelect={handleSelect}
+          onRename={handleRename}
+          onDelete={handleDelete}
         />
       </div>
-      <div className="flex flex-1 flex-col">
-        <div className="flex items-center justify-end gap-2 border-b border-gray-800 px-4 py-2">
+
+      {/* Right: chat area */}
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
+        <div style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "flex-end",
+          gap: 4,
+          padding: "6px 16px",
+          borderBottom: "1px solid var(--border-primary)",
+          flexShrink: 0,
+        }}>
           <button
             onClick={() => openPanel("roleLibrary")}
-            className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-gray-400 hover:bg-gray-800 hover:text-gray-200"
+            style={{
+              background: "none",
+              border: "none",
+              color: "var(--text-muted)",
+              fontSize: 11,
+              cursor: "pointer",
+              padding: "4px 8px",
+              borderRadius: 4,
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.color = "var(--text-primary)"; e.currentTarget.style.background = "var(--bg-hover)"; }}
+            onMouseLeave={(e) => { e.currentTarget.style.color = "var(--text-muted)"; e.currentTarget.style.background = "transparent"; }}
           >
-            <Library className="h-3.5 w-3.5" />
             角色库
           </button>
           <button
             onClick={handleNewConversation}
-            className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-gray-400 hover:bg-gray-800 hover:text-gray-200"
+            style={{
+              background: "none",
+              border: "none",
+              color: "var(--text-muted)",
+              fontSize: 11,
+              cursor: "pointer",
+              padding: "4px 8px",
+              borderRadius: 4,
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.color = "var(--text-primary)"; e.currentTarget.style.background = "var(--bg-hover)"; }}
+            onMouseLeave={(e) => { e.currentTarget.style.color = "var(--text-muted)"; e.currentTarget.style.background = "transparent"; }}
           >
-            <Plus className="h-3.5 w-3.5" />
-            新建
+            + 新建
           </button>
         </div>
         <ChatArea
@@ -184,6 +243,7 @@ export default function ChatPage({ openPanel }: ChatPageProps) {
           isStreaming={isStreaming}
           onSend={handleSend}
           activeConversationId={activeId}
+          onSelectConversation={() => handleNewConversation()}
         />
       </div>
     </div>

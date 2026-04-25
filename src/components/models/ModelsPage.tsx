@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback } from "react";
-import { Plus, Search, ChevronDown, ChevronRight } from "lucide-react";
+import { Plus, Search, ChevronDown, ChevronRight, Zap } from "lucide-react";
 import { listProviders, listSubscriptions, deleteSubscription, setActiveSubscription } from "@/lib/tauri";
 import type { Provider } from "@/types/provider";
 import type { Subscription } from "@/types/subscription";
+import { toast } from "sonner";
 
 interface Props {
   openPanel: (type: string, props?: Record<string, unknown>) => void;
@@ -10,159 +11,133 @@ interface Props {
 
 export default function ModelsPage({ openPanel }: Props) {
   const [providers, setProviders] = useState<Provider[]>([]);
-  const [subscriptions, setSubscriptions] = useState<Subscription[]>([]);
+  const [subs, setSubs] = useState<Subscription[]>([]);
   const [search, setSearch] = useState("");
-  const [expandedProviders, setExpandedProviders] = useState<Set<string>>(new Set());
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
 
-  const loadData = useCallback(async () => {
+  const load = useCallback(async () => {
     try {
-      const [provs, subs] = await Promise.all([listProviders(), listSubscriptions()]);
-      setProviders(provs);
-      setSubscriptions(subs);
-      setExpandedProviders(new Set(provs.map((p) => p.id)));
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setLoading(false);
-    }
+      const [p, s] = await Promise.all([listProviders(), listSubscriptions()]);
+      setProviders(p);
+      setSubs(s);
+      setExpanded(new Set(p.map((x) => x.id)));
+    } catch (e) { console.error(e); }
+    finally { setLoading(false); }
   }, []);
 
-  useEffect(() => { loadData(); }, [loadData]);
+  useEffect(() => { load(); }, [load]);
 
-  const toggleProvider = (id: string) => {
-    setExpandedProviders((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
+  const toggle = (id: string) => {
+    setExpanded((prev) => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   };
 
   const handleDelete = async (id: string) => {
-    try {
-      await deleteSubscription(id);
-      setSubscriptions((prev) => prev.filter((s) => s.id !== id));
-    } catch (e) {
-      console.error(e);
-    }
+    try { await deleteSubscription(id); setSubs((p) => p.filter((s) => s.id !== id)); toast.success("已删除"); }
+    catch { toast.error("删除失败"); }
   };
 
-  const handleSetActive = async (id: string) => {
-    try {
-      await setActiveSubscription(id);
-      setSubscriptions((prev) =>
-        prev.map((s) => ({ ...s, is_active: s.id === id }))
-      );
-    } catch (e) {
-      console.error(e);
-    }
+  const handleActivate = async (id: string) => {
+    try { await setActiveSubscription(id); setSubs((p) => p.map((s) => ({ ...s, is_active: s.id === id }))); toast.success("已激活"); }
+    catch { toast.error("激活失败"); }
   };
 
-  const filteredSubs = subscriptions.filter(
-    (s) =>
-      s.name.toLowerCase().includes(search.toLowerCase()) ||
-      s.model.toLowerCase().includes(search.toLowerCase())
-  );
+  const filtered = subs.filter((s) => s.name.toLowerCase().includes(search.toLowerCase()) || s.model.toLowerCase().includes(search.toLowerCase()));
 
-  if (loading) {
-    return (
-      <div className="flex h-full items-center justify-center">
-        <p className="text-sm text-gray-500">加载中...</p>
-      </div>
-    );
-  }
+  if (loading) return <div style={{ display: "flex", height: "100%", alignItems: "center", justifyContent: "center" }}><p style={{ fontSize: 12, color: "var(--text-muted)" }}>加载中...</p></div>;
 
   return (
-    <div className="h-full overflow-y-auto p-6">
-      <div className="mb-4 flex items-center justify-between">
-        <h2 className="text-lg font-semibold text-gray-200">模型/套餐管理</h2>
+    <div style={{ height: "100%", overflowY: "auto", padding: 24 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+        <h2 style={{ fontSize: 15, fontWeight: 600, color: "var(--text-primary)" }}>模型管理</h2>
         <button
           onClick={() => openPanel("subscriptionForm", {})}
-          className="flex items-center gap-1 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700"
+          style={{
+            display: "flex", alignItems: "center", gap: 6, padding: "6px 14px",
+            borderRadius: 6, border: "none", background: "var(--accent)", color: "#fff",
+            fontSize: 12, cursor: "pointer",
+          }}
+          onMouseEnter={(e) => { e.currentTarget.style.background = "var(--accent-hover)"; }}
+          onMouseLeave={(e) => { e.currentTarget.style.background = "var(--accent)"; }}
         >
-          <Plus className="h-3.5 w-3.5" /> 添加套餐
+          <Plus size={14} /> 添加套餐
         </button>
       </div>
 
-      <div className="mb-4">
-        <div className="relative">
-          <Search className="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-500" />
+      <div style={{ marginBottom: 16 }}>
+        <div style={{ position: "relative" }}>
+          <Search size={12} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "var(--text-muted)" }} />
           <input
-            type="text"
-            placeholder="搜索套餐..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="w-full rounded-md border border-gray-700 bg-gray-800 py-1.5 pl-7 pr-3 text-xs text-gray-200 outline-none focus:border-blue-500"
+            type="text" placeholder="搜索套餐..."
+            value={search} onChange={(e) => setSearch(e.target.value)}
+            style={{
+              width: "100%", borderRadius: 6, padding: "7px 12px 7px 30px",
+              border: "1px solid var(--border-primary)", background: "var(--bg-tertiary)",
+              color: "var(--text-primary)", fontSize: 12, outline: "none",
+            }}
+            onFocus={(e) => { e.currentTarget.style.borderColor = "var(--accent)"; }}
+            onBlur={(e) => { e.currentTarget.style.borderColor = "var(--border-primary)"; }}
           />
         </div>
       </div>
 
       {providers.length === 0 && (
-        <p className="py-8 text-center text-sm text-gray-600">
-          还没有添加套餐，点击 [添加套餐] 开始管理你的 API 订阅
-        </p>
+        <div style={{ textAlign: "center", padding: "40px 0", color: "var(--text-muted)", fontSize: 12 }}>
+          还没有添加套餐，点击 [添加套餐] 开始
+        </div>
       )}
 
-      {providers.map((provider) => {
-        const providerSubs = filteredSubs.filter((s) => s.provider_id === provider.id);
-        const isExpanded = expandedProviders.has(provider.id);
+      {providers.map((prov) => {
+        const ps = filtered.filter((s) => s.provider_id === prov.id);
+        const isOpen = expanded.has(prov.id);
         return (
-          <div key={provider.id} className="mb-2">
+          <div key={prov.id} style={{ marginBottom: 4 }}>
             <button
-              onClick={() => toggleProvider(provider.id)}
-              className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-gray-300 hover:bg-gray-800"
+              onClick={() => toggle(prov.id)}
+              style={{
+                width: "100%", display: "flex", alignItems: "center", gap: 8,
+                padding: "8px 10px", borderRadius: 6, border: "none",
+                background: "none", color: "var(--text-primary)", fontSize: 12,
+                cursor: "pointer",
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-hover)"; }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = "none"; }}
             >
-              {isExpanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
-              {provider.name}
-              <span className="text-xs text-gray-500">({providerSubs.length})</span>
+              {isOpen ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+              {prov.name}
+              <span style={{ color: "var(--text-muted)", fontSize: 10 }}>({ps.length})</span>
             </button>
-            {isExpanded && providerSubs.length > 0 && (
-              <div className="ml-5 space-y-1">
-                {providerSubs.map((sub) => (
+            {isOpen && ps.length > 0 && (
+              <div style={{ marginLeft: 24 }}>
+                {ps.map((s) => (
                   <div
-                    key={sub.id}
-                    className="flex items-center justify-between rounded-md px-2 py-1.5 hover:bg-gray-800"
+                    key={s.id}
+                    style={{
+                      display: "flex", alignItems: "center", justifyContent: "space-between",
+                      padding: "8px 12px", borderRadius: 6,
+                      border: s.is_active ? "1px solid var(--accent)" : "1px solid transparent",
+                      background: s.is_active ? "var(--accent-bg)" : "transparent",
+                      marginBottom: 2,
+                    }}
+                    onMouseEnter={(e) => { if (!s.is_active) e.currentTarget.style.background = "var(--bg-hover)"; }}
+                    onMouseLeave={(e) => { if (!s.is_active) e.currentTarget.style.background = s.is_active ? "var(--accent-bg)" : "transparent"; }}
                   >
-                    <div className="flex items-center gap-3">
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs text-gray-300">{sub.name}</span>
-                        <span className="text-[10px] text-gray-500">{sub.model}</span>
-                        {sub.is_active && (
-                          <span className="rounded-full bg-green-600/20 px-1.5 py-0.5 text-[10px] text-green-400">
-                            生效中
-                          </span>
-                        )}
-                      </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                      <span style={{ fontSize: 12, color: "var(--text-primary)" }}>{s.name}</span>
+                      <span style={{ fontSize: 10, color: "var(--text-muted)" }}>{s.model}</span>
+                      {s.is_active && <span style={{ fontSize: 9, color: "var(--accent)", background: "var(--accent-bg)", padding: "1px 6px", borderRadius: 4 }}><Zap size={10} style={{ display: "inline", verticalAlign: "middle" }} /> 生效中</span>}
                     </div>
-                    <div className="flex items-center gap-1">
-                      <button
-                        onClick={() => openPanel("subscriptionForm", { id: sub.id, subscription: sub })}
-                        className="rounded px-1.5 py-0.5 text-[10px] text-gray-400 hover:bg-gray-700"
-                      >
-                        编辑
-                      </button>
-                      {!sub.is_active && (
-                        <button
-                          onClick={() => handleSetActive(sub.id)}
-                          className="rounded px-1.5 py-0.5 text-[10px] text-blue-400 hover:bg-blue-600/10"
-                        >
-                          激活
-                        </button>
-                      )}
-                      <button
-                        onClick={() => handleDelete(sub.id)}
-                        className="rounded px-1.5 py-0.5 text-[10px] text-red-400 hover:bg-red-600/10"
-                      >
-                        删除
-                      </button>
+                    <div style={{ display: "flex", gap: 4 }}>
+                      <button onClick={() => openPanel("subscriptionForm", { id: s.id, subscription: s })} style={actionBtnStyle}>编辑</button>
+                      {!s.is_active && <button onClick={() => handleActivate(s.id)} style={{ ...actionBtnStyle, color: "var(--accent)" }}>激活</button>}
+                      <button onClick={() => handleDelete(s.id)} style={{ ...actionBtnStyle, color: "var(--red)" }}>删除</button>
                     </div>
                   </div>
                 ))}
               </div>
             )}
-            {isExpanded && providerSubs.length === 0 && !search && (
-              <p className="ml-5 py-1 text-xs text-gray-600">暂无套餐</p>
+            {isOpen && ps.length === 0 && !search && (
+              <p style={{ marginLeft: 24, padding: "6px 0", fontSize: 11, color: "var(--text-muted)" }}>暂无套餐</p>
             )}
           </div>
         );
@@ -170,3 +145,8 @@ export default function ModelsPage({ openPanel }: Props) {
     </div>
   );
 }
+
+const actionBtnStyle: React.CSSProperties = {
+  background: "none", border: "none", fontSize: 10, cursor: "pointer",
+  padding: "2px 6px", borderRadius: 4, color: "var(--text-muted)",
+};

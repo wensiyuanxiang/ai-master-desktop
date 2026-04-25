@@ -102,7 +102,13 @@ async fn stream_anthropic(
         .json(&request)
         .send()
         .await
-        .map_err(|e| AppError::HttpRequest(e.to_string()))?;
+        .map_err(|e| AppError::HttpRequest(format!("API request failed: {}. URL: {}", e, url)))?;
+
+    let status = resp.status();
+    if !status.is_success() {
+        let body = resp.text().await.unwrap_or_default();
+        return Err(AppError::HttpRequest(format!("API error {}: {}", status.as_u16(), body)));
+    }
 
     let mut full_text = String::new();
 
@@ -183,7 +189,15 @@ async fn stream_openai_compatible(
         .json(&request)
         .send()
         .await
-        .map_err(|e| AppError::HttpRequest(e.to_string()))?;
+        .map_err(|e| {
+            AppError::HttpRequest(format!("API request failed: {}. URL: {}", e, url))
+        })?;
+
+    let status = resp.status();
+    if !status.is_success() {
+        let body = resp.text().await.unwrap_or_default();
+        return Err(AppError::HttpRequest(format!("API error {}: {}", status.as_u16(), body)));
+    }
 
     let mut full_text = String::new();
 

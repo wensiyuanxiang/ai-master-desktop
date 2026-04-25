@@ -1,7 +1,6 @@
 import { useState } from "react";
-import { Search, Trash2, Pencil } from "lucide-react";
+import { Search, Trash2, Pencil, MessageSquareText } from "lucide-react";
 import type { Conversation } from "@/types/conversation";
-import { cn } from "@/lib/utils";
 
 interface Props {
   conversations: Conversation[];
@@ -21,17 +20,9 @@ export default function ConversationList({ conversations, activeId, onSelect, on
     c.title.toLowerCase().includes(search.toLowerCase())
   );
 
-  const handleContextMenu = (e: React.MouseEvent, id: string) => {
-    e.preventDefault();
-    setContextMenu({ id, x: e.clientX, y: e.clientY });
-  };
-
   const startRename = (id: string) => {
-    const convo = conversations.find((c) => c.id === id);
-    if (convo) {
-      setRenaming(id);
-      setRenameTitle(convo.title);
-    }
+    const c = conversations.find((c) => c.id === id);
+    if (c) { setRenaming(id); setRenameTitle(c.title); }
     setContextMenu(null);
   };
 
@@ -40,28 +31,33 @@ export default function ConversationList({ conversations, activeId, onSelect, on
     setRenaming(null);
   };
 
-  const handleDelete = (id: string) => {
-    onDelete(id);
-    setContextMenu(null);
-  };
-
   return (
-    <div className="flex flex-1 flex-col overflow-hidden">
-      <div className="px-3 pb-2">
-        <div className="relative">
-          <Search className="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-500" />
+    <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+      <div style={{ padding: "0 12px 8px" }}>
+        <div style={{ position: "relative" }}>
+          <Search size={12} style={{ position: "absolute", left: 8, top: "50%", transform: "translateY(-50%)", color: "var(--text-muted)" }} />
           <input
             type="text"
-            placeholder="搜索..."
+            placeholder="搜索对话..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="w-full rounded-md border border-gray-700 bg-gray-800 py-1.5 pl-7 pr-2 text-xs text-gray-200 outline-none focus:border-blue-500"
+            style={{
+              width: "100%", borderRadius: 6, padding: "5px 8px 5px 26px",
+              border: "1px solid var(--border-primary)",
+              background: "var(--bg-tertiary)", color: "var(--text-primary)",
+              fontSize: 11, outline: "none",
+            }}
+            onFocus={(e) => { e.currentTarget.style.borderColor = "var(--accent)"; }}
+            onBlur={(e) => { e.currentTarget.style.borderColor = "var(--border-primary)"; }}
           />
         </div>
       </div>
-      <div className="flex-1 overflow-y-auto px-2">
+
+      <div style={{ flex: 1, overflowY: "auto", padding: "0 6px" }}>
         {filtered.length === 0 && (
-          <p className="px-2 py-8 text-center text-xs text-gray-600">暂无对话</p>
+          <p style={{ textAlign: "center", padding: "24px 0", fontSize: 11, color: "var(--text-muted)" }}>
+            {search ? "无匹配结果" : "暂无对话"}
+          </p>
         )}
         {filtered.map((c) => (
           <div key={c.id}>
@@ -75,43 +71,75 @@ export default function ConversationList({ conversations, activeId, onSelect, on
                   if (e.key === "Enter") handleRename(c.id);
                   if (e.key === "Escape") setRenaming(null);
                 }}
-                className="w-full rounded-md border border-blue-500 bg-gray-800 px-2 py-1.5 text-xs text-gray-200 outline-none"
+                style={{
+                  width: "calc(100% - 12px)", margin: "0 6px", borderRadius: 4, padding: "5px 8px",
+                  border: "1px solid var(--accent)", background: "var(--bg-tertiary)",
+                  color: "var(--text-primary)", fontSize: 11, outline: "none",
+                }}
               />
             ) : (
               <button
                 onClick={() => onSelect(c.id)}
-                onContextMenu={(e) => handleContextMenu(e, c.id)}
-                className={cn(
-                  "w-full rounded-md px-2 py-1.5 text-left text-xs transition-colors",
-                  activeId === c.id
-                    ? "bg-blue-600/20 text-blue-400"
-                    : "text-gray-400 hover:bg-gray-800 hover:text-gray-200"
-                )}
+                onContextMenu={(e) => { e.preventDefault(); setContextMenu({ id: c.id, x: e.clientX, y: e.clientY }); }}
+                style={{
+                  width: "100%", textAlign: "left", padding: "6px 10px", borderRadius: 6,
+                  fontSize: 11, border: "none", cursor: "pointer",
+                  background: activeId === c.id ? "var(--accent-bg)" : "transparent",
+                  color: activeId === c.id ? "var(--text-primary)" : "var(--text-secondary)",
+                  display: "flex", alignItems: "center", gap: 6,
+                  transition: "all 0.1s",
+                }}
+                onMouseEnter={(e) => {
+                  if (activeId !== c.id) e.currentTarget.style.background = "var(--bg-hover)";
+                }}
+                onMouseLeave={(e) => {
+                  if (activeId !== c.id) e.currentTarget.style.background = "transparent";
+                }}
               >
-                <p className="truncate">{c.title}</p>
+                <MessageSquareText size={12} style={{ color: "var(--text-muted)", flexShrink: 0 }} />
+                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.title}</span>
               </button>
             )}
           </div>
         ))}
       </div>
+
       {contextMenu && (
         <>
-          <div className="fixed inset-0 z-50" onClick={() => setContextMenu(null)} />
+          <div style={{ position: "fixed", inset: 0, zIndex: 99 }} onClick={() => setContextMenu(null)} />
           <div
-            className="fixed z-50 min-w-[120px] rounded-md border border-gray-700 bg-gray-800 py-1 shadow-xl"
-            style={{ left: contextMenu.x, top: contextMenu.y }}
+            style={{
+              position: "fixed", left: contextMenu.x, top: contextMenu.y, zIndex: 100,
+              background: "var(--bg-secondary)", border: "1px solid var(--border-primary)",
+              borderRadius: 8, padding: 4, boxShadow: "0 4px 16px rgba(0,0,0,0.4)",
+              minWidth: 120,
+            }}
           >
             <button
               onClick={() => startRename(contextMenu.id)}
-              className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-gray-300 hover:bg-gray-700"
+              style={{
+                width: "100%", display: "flex", alignItems: "center", gap: 8,
+                padding: "6px 10px", fontSize: 11, borderRadius: 4,
+                border: "none", background: "none", color: "var(--text-secondary)",
+                cursor: "pointer",
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-hover)"; }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = "none"; }}
             >
-              <Pencil className="h-3 w-3" /> 重命名
+              <Pencil size={11} /> 重命名
             </button>
             <button
-              onClick={() => handleDelete(contextMenu.id)}
-              className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-red-400 hover:bg-gray-700"
+              onClick={() => { onDelete(contextMenu.id); setContextMenu(null); }}
+              style={{
+                width: "100%", display: "flex", alignItems: "center", gap: 8,
+                padding: "6px 10px", fontSize: 11, borderRadius: 4,
+                border: "none", background: "none", color: "var(--red)",
+                cursor: "pointer",
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-hover)"; }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = "none"; }}
             >
-              <Trash2 className="h-3 w-3" /> 删除
+              <Trash2 size={11} /> 删除
             </button>
           </div>
         </>

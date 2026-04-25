@@ -1,116 +1,88 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { exportAllData, importAllData, getAppVersion } from "@/lib/tauri";
+import { toast } from "sonner";
 
 export default function SettingsPage() {
   const { i18n } = useTranslation();
   const [version, setVersion] = useState("0.1.0");
-  const [importResult, setImportResult] = useState<string | null>(null);
 
-  const handleLanguageChange = (lang: string) => {
-    i18n.changeLanguage(lang);
-  };
+  useState(() => { getAppVersion().then(setVersion).catch(() => {}); });
 
   const handleExport = async () => {
     try {
       const { save } = await import("@tauri-apps/plugin-dialog");
-      const dest = await save({
-        defaultPath: "ai-master-export.json",
-        filters: [{ name: "JSON", extensions: ["json"] }],
-      });
-      if (dest) {
-        await exportAllData(dest);
-      }
-    } catch (e) {
-      console.error(e);
-    }
+      const dest = await save({ defaultPath: "ai-master-export.json", filters: [{ name: "JSON", extensions: ["json"] }] });
+      if (dest) { await exportAllData(dest); toast.success("导出成功"); }
+    } catch (e) { toast.error("导出失败"); }
   };
 
   const handleImport = async () => {
     try {
       const { open } = await import("@tauri-apps/plugin-dialog");
-      const file = await open({
-        multiple: false,
-        filters: [{ name: "JSON", extensions: ["json"] }],
-      });
+      const file = await open({ multiple: false, filters: [{ name: "JSON", extensions: ["json"] }] });
       if (file && typeof file === "string") {
-        const result = await importAllData(file);
-        setImportResult(
-          `导入完成: ${result.providers_imported} 厂商, ${result.subscriptions_imported} 套餐, ${result.roles_imported} 角色`
-        );
+        const r = await importAllData(file);
+        toast.success(`导入: ${r.providers_imported}厂商 ${r.subscriptions_imported}套餐 ${r.roles_imported}角色`);
       }
-    } catch (e) {
-      console.error(e);
-    }
+    } catch (e) { toast.error("导入失败"); }
   };
 
-  const loadVersion = async () => {
-    try {
-      const v = await getAppVersion();
-      setVersion(v);
-    } catch { /* ignore */ }
+  const sectionStyle: React.CSSProperties = {
+    border: "1px solid var(--border-primary)", borderRadius: 8,
+    background: "var(--bg-secondary)", padding: 16, marginBottom: 16,
   };
-  loadVersion();
+
+  const rowStyle: React.CSSProperties = {
+    display: "flex", justifyContent: "space-between", alignItems: "center",
+    padding: "10px 0", fontSize: 12,
+  };
+
+  const btnStyle: React.CSSProperties = {
+    padding: "5px 12px", borderRadius: 4, border: "1px solid var(--border-secondary)",
+    background: "none", color: "var(--accent)", fontSize: 11, cursor: "pointer",
+  };
 
   return (
-    <div className="h-full overflow-y-auto p-6">
-      <h2 className="mb-6 text-lg font-semibold text-gray-200">个人配置</h2>
+    <div style={{ height: "100%", overflowY: "auto", padding: 24 }}>
+      <h2 style={{ fontSize: 15, fontWeight: 600, color: "var(--text-primary)", marginBottom: 20 }}>设置</h2>
 
-      <div className="mb-6">
-        <h3 className="mb-2 text-sm font-medium text-gray-400">通用设置</h3>
-        <div className="space-y-2 rounded-lg border border-gray-800 bg-gray-900 p-4">
-          <div className="flex items-center justify-between">
-            <span className="text-xs text-gray-300">语言切换</span>
-            <select
-              value={i18n.language}
-              onChange={(e) => handleLanguageChange(e.target.value)}
-              className="rounded-md border border-gray-700 bg-gray-800 px-2 py-1 text-xs text-gray-200 outline-none"
-            >
-              <option value="zh">中文</option>
-              <option value="en">English</option>
-            </select>
-          </div>
-          <div className="flex items-center justify-between">
-            <span className="text-xs text-gray-300">主题</span>
-            <span className="text-xs text-gray-500">深色 (默认)</span>
-          </div>
+      <div style={sectionStyle}>
+        <h3 style={{ fontSize: 12, fontWeight: 600, color: "var(--text-secondary)", marginBottom: 8 }}>通用</h3>
+        <div style={rowStyle}>
+          <span style={{ color: "var(--text-secondary)" }}>语言</span>
+          <select
+            value={i18n.language}
+            onChange={(e) => i18n.changeLanguage(e.target.value)}
+            style={{
+              borderRadius: 4, border: "1px solid var(--border-primary)",
+              background: "var(--bg-tertiary)", color: "var(--text-primary)",
+              fontSize: 11, padding: "4px 8px", outline: "none", cursor: "pointer",
+            }}
+          >
+            <option value="zh">中文</option>
+            <option value="en">English</option>
+          </select>
         </div>
       </div>
 
-      <div className="mb-6">
-        <h3 className="mb-2 text-sm font-medium text-gray-400">数据管理</h3>
-        <div className="space-y-2 rounded-lg border border-gray-800 bg-gray-900 p-4">
-          <div className="flex items-center justify-between">
-            <span className="text-xs text-gray-300">导出数据</span>
-            <button
-              onClick={handleExport}
-              className="rounded-md bg-gray-800 px-2 py-1 text-xs text-blue-400 hover:bg-gray-700"
-            >
-              导出
-            </button>
-          </div>
-          <div className="flex items-center justify-between">
-            <span className="text-xs text-gray-300">导入数据</span>
-            <button
-              onClick={handleImport}
-              className="rounded-md bg-gray-800 px-2 py-1 text-xs text-blue-400 hover:bg-gray-700"
-            >
-              导入
-            </button>
-          </div>
-          {importResult && (
-            <p className="text-xs text-green-400">{importResult}</p>
-          )}
+      <div style={sectionStyle}>
+        <h3 style={{ fontSize: 12, fontWeight: 600, color: "var(--text-secondary)", marginBottom: 8 }}>数据</h3>
+        <div style={rowStyle}>
+          <span style={{ color: "var(--text-secondary)" }}>导出所有数据</span>
+          <button onClick={handleExport} style={btnStyle} onMouseEnter={(e) => { e.currentTarget.style.background = "var(--accent-bg)"; }} onMouseLeave={(e) => { e.currentTarget.style.background = "none"; }}>导出</button>
+        </div>
+        <div style={rowStyle}>
+          <span style={{ color: "var(--text-secondary)" }}>导入数据</span>
+          <button onClick={handleImport} style={btnStyle} onMouseEnter={(e) => { e.currentTarget.style.background = "var(--accent-bg)"; }} onMouseLeave={(e) => { e.currentTarget.style.background = "none"; }}>导入</button>
         </div>
       </div>
 
-      <div>
-        <h3 className="mb-2 text-sm font-medium text-gray-400">关于</h3>
-        <div className="space-y-2 rounded-lg border border-gray-800 bg-gray-900 p-4">
-          <div className="flex items-center justify-between">
-            <span className="text-xs text-gray-300">版本</span>
-            <span className="text-xs text-gray-500">v{version}</span>
-          </div>
+      <div style={sectionStyle}>
+        <h3 style={{ fontSize: 12, fontWeight: 600, color: "var(--text-secondary)", marginBottom: 8 }}>关于</h3>
+        <div style={rowStyle}>
+          <span style={{ color: "var(--text-secondary)" }}>版本</span>
+          <span style={{ color: "var(--text-muted)", fontSize: 11 }}>v{version}</span>
         </div>
       </div>
     </div>
