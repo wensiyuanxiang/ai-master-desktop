@@ -38,6 +38,7 @@ pub fn run() {
             commands::subscription::delete_subscription,
             commands::subscription::set_active_subscription,
             commands::subscription::get_active_subscription,
+            commands::subscription::get_subscription_api_key,
             commands::role::list_roles,
             commands::role::create_role,
             commands::role::update_role,
@@ -66,6 +67,10 @@ pub fn run() {
             commands::export_import::export_all_data,
             commands::export_import::import_all_data,
             commands::export_import::get_app_version,
+            commands::tool_terminal::run_tool_terminal_command,
+            commands::tool_terminal::write_tool_terminal_input,
+            commands::tool_terminal::resize_tool_terminal,
+            commands::tool_terminal::close_tool_terminal,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -25,7 +25,7 @@ export default function SlidePanel({ isOpen, onClose, children, title }: Props) 
           position: "fixed",
           inset: 0,
           zIndex: 40,
-          background: "rgba(0,0,0,0.4)",
+          background: "var(--overlay-scrim)",
           opacity: isOpen ? 1 : 0,
           pointerEvents: isOpen ? "auto" : "none",
           transition: "opacity 0.2s",

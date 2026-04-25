@@ -79,6 +79,28 @@ INSERT OR IGNORE INTO providers (id, name) VALUES
     ('mistral', 'Mistral');
 ";
 
+const SEED_ROLES_SQL: &str = r#"
+INSERT OR IGNORE INTO roles (id, name, description, system_prompt, tags, is_pinned)
+VALUES (
+    'seed-role-pediatric-cn',
+    '儿童医生专家',
+    '面向家长与儿童健康问题的医学倾向辅助回答：生长发育、营养、常见病科普与就诊提示。',
+    '你是一位严谨、有耐心的儿科学方向临床专家（面向中国家长，默认使用中文简体交流）。
+
+**原则**
+- 以循证医学与国内儿科常见诊疗共识为参考，语言通俗、可执行，避免制造焦虑。
+- 涉及具体用药、剂量、是否停药或替代处方时，必须说明需由面诊医生决定，不代替线下诊疗。
+- 若出现高热不退、精神萎靡、呼吸急促或困难、抽搐、严重脱水、紫绀、意识改变等，应明确建议**立即就医或拨打急救**。
+
+**适合讨论**：生长发育与喂养、常见呼吸道/消化道问题的一般护理与观察要点、预防免疫与健康生活习惯、症状何时需就诊等。
+**避免**：为个体给出明确诊断、处方级用药方案或保证疗效的承诺。
+
+回答时先可简要澄清孩子年龄、主要症状与持续时间（若用户未提供再追问关键信息），再给出分步建议。',
+    '["医疗","儿科","儿童健康"]',
+    1
+);
+"#;
+
 pub fn init_db(app_handle: &tauri::AppHandle) -> AppResult<()> {
     let app_dir = app_handle
         .path()
@@ -97,6 +119,7 @@ pub fn init_db(app_handle: &tauri::AppHandle) -> AppResult<()> {
         "ALTER TABLE subscriptions ADD COLUMN api_format TEXT NOT NULL DEFAULT 'openai';"
     ).ok();
     conn.execute_batch(SEED_PROVIDERS_SQL)?;
+    conn.execute_batch(SEED_ROLES_SQL)?;
 
     Ok(())
 }

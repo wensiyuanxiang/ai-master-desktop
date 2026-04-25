@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#1a1a2e"/>
+      <stop offset="100%" style="stop-color:#16213e"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#667eea"/>
+      <stop offset="100%" style="stop-color:#764ba2"/>
+    </linearGradient>
+    <linearGradient id="glow" x1="50%" y1="0%" x2="50%" y2="100%">
+      <stop offset="0%" style="stop-color:#a78bfa"/>
+      <stop offset="100%" style="stop-color:#667eea"/>
+    </linearGradient>
+    <linearGradient id="spark" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#f093fb"/>
+      <stop offset="100%" style="stop-color:#667eea"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background rounded square -->
+  <rect x="16" y="16" width="480" height="480" rx="96" ry="96" fill="url(#bg)"/>
+
+  <!-- Central hexagon shape -->
+  <polygon
+    points="256,100 380,172 380,316 256,388 132,316 132,172"
+    fill="none"
+    stroke="url(#accent)"
+    stroke-width="8"
+    stroke-linejoin="round"/>
+
+  <!-- Inner diamond / AI core -->
+  <polygon
+    points="256,148 338,220 256,292 174,220"
+    fill="url(#glow)"
+    opacity="0.9"/>
+
+  <!-- Center node -->
+  <circle cx="256" cy="220" r="24" fill="url(#bg)" stroke="url(#spark)" stroke-width="6"/>
+
+  <!-- Neural connection nodes (top, right, bottom, left) -->
+  <circle cx="256" cy="148" r="12" fill="#a78bfa" opacity="0.8"/>
+  <circle cx="338" cy="220" r="12" fill="#a78bfa" opacity="0.8"/>
+  <circle cx="256" cy="292" r="12" fill="#a78bfa" opacity="0.8"/>
+  <circle cx="174" cy="220" r="12" fill="#a78bfa" opacity="0.8"/>
+
+  <!-- Connection lines from center to nodes -->
+  <line x1="256" y1="148" x2="256" y2="196" stroke="#a78bfa" stroke-width="3" opacity="0.5"/>
+  <line x1="338" y1="220" x2="282" y2="220" stroke="#a78bfa" stroke-width="3" opacity="0.5"/>
+  <line x1="256" y1="292" x2="256" y2="244" stroke="#a78bfa" stroke-width="3" opacity="0.5"/>
+  <line x1="174" y1="220" x2="230" y2="220" stroke="#a78bfa" stroke-width="3" opacity="0.5"/>
+
+  <!-- Orbiting accent arc (top-right) -->
+  <path d="M 320 140 A 140 140 0 0 1 408 260"
+    fill="none" stroke="url(#spark)" stroke-width="3" stroke-linecap="round" opacity="0.6"/>
+
+  <!-- Small sparkle dots -->
+  <circle cx="340" cy="130" r="4" fill="#f093fb" opacity="0.8"/>
+  <circle cx="395" cy="180" r="3" fill="#f093fb" opacity="0.6"/>
+  <circle cx="170" cy="130" r="3" fill="#a78bfa" opacity="0.5"/>
+  <circle cx="130" cy="200" r="4" fill="#a78bfa" opacity="0.4"/>
+</svg>

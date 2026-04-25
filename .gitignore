@@ -1,5 +1,40 @@
+# Dependencies
 node_modules/
+
+# Vite / frontend build
 dist/
-target/
-.DS_Store
+.vite/
+
+# Rust (Tauri) — build tree can be very large
+src-tauri/target/
+
+# Logs & debug
 *.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Environment & secrets (API keys, local overrides)
+.env
+.env.*
+!.env.example
+
+# TypeScript incremental
+*.tsbuildinfo
+
+# Tests / coverage (Vitest)
+coverage/
+
+# Tooling caches
+.eslintcache
+.prettiercache
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors / IDEs
+.idea/
+*.swp
+*.swo

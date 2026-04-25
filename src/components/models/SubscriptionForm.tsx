@@ -1,8 +1,8 @@
 import { useState, useEffect } from "react";
-import { Eye, EyeOff } from "lucide-react";
+import { Eye, EyeOff, Copy, Check } from "lucide-react";
 import type { Subscription } from "@/types/subscription";
 import type { Provider } from "@/types/provider";
-import { listProviders, createSubscription, updateSubscription } from "@/lib/tauri";
+import { listProviders, createSubscription, updateSubscription, getSubscriptionApiKey } from "@/lib/tauri";
 import { toast } from "sonner";
 
 interface Props {
@@ -29,9 +29,71 @@ export default function SubscriptionForm({ id, subscription, onSaved, onCancel }
   const [endDate, setEndDate] = useState(subscription?.end_date || "");
   const [apiFormat, setApiFormat] = useState(subscription?.api_format || "openai");
   const [showKey, setShowKey] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [loadingKey, setLoadingKey] = useState(false);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => { listProviders().then(setProviders).catch(() => {}); }, []);
+
+  useEffect(() => {
+    if (!copied) return;
+    const timer = window.setTimeout(() => setCopied(false), 1200);
+    return () => window.clearTimeout(timer);
+  }, [copied]);
+
+  const hasStoredKey = Boolean(id && subscription?.api_key_masked);
+
+  const displayApiKey = (() => {
+    if (apiKey) return apiKey;
+    if (hasStoredKey) return "***";
+    return "";
+  })();
+
+  const handleToggleKeyVisibility = async () => {
+    if (!showKey && !apiKey && id) {
+      try {
+        setLoadingKey(true);
+        const realKey = await getSubscriptionApiKey(id);
+        setApiKey(realKey);
+      } catch {
+        toast.error("读取 API Key 失败");
+        return;
+      } finally {
+        setLoadingKey(false);
+      }
+    }
+    setShowKey((prev) => !prev);
+  };
+
+  const handleCopyKey = async () => {
+    if (!apiKey) {
+      if (!id) {
+        toast.error("请先输入 API Key");
+        return;
+      }
+      try {
+        setLoadingKey(true);
+        const realKey = await getSubscriptionApiKey(id);
+        setApiKey(realKey);
+        await navigator.clipboard.writeText(realKey);
+        setCopied(true);
+        toast.success("API Key 已复制");
+      } catch {
+        toast.error("复制 API Key 失败");
+      } finally {
+        setLoadingKey(false);
+      }
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(apiKey);
+      setCopied(true);
+      toast.success("API Key 已复制");
+    } catch {
+      toast.error("复制 API Key 失败");
+    }
+  };
 
   const handleSave = async () => {
     if (!name.trim() || (!id && !apiKey.trim())) return;
@@ -75,23 +137,48 @@ export default function SubscriptionForm({ id, subscription, onSaved, onCancel }
       <div>
         <label style={labelStyle}>API Key</label>
         <div style={{ position: "relative" }}>
-          <input type={showKey ? "text" : "password"} value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder={id ? "留空不修改" : "输入 API Key"} style={{ ...inputStyle, paddingRight: 32 }} onFocus={(e) => { e.currentTarget.style.borderColor = "var(--accent)"; }} onBlur={(e) => { e.currentTarget.style.borderColor = "var(--border-primary)"; }} />
+          <input
+            type={showKey ? "text" : "password"}
+            value={displayApiKey}
+            onChange={(e) => setApiKey(e.target.value)}
+            placeholder={id ? "留空不修改" : "输入 API Key"}
+            style={{ ...inputStyle, paddingRight: 56 }}
+            onFocus={(e) => {
+              e.currentTarget.style.borderColor = "var(--accent)";
+              if (hasStoredKey && !showKey && !apiKey) {
+                e.currentTarget.select();
+              }
+            }}
+            onBlur={(e) => { e.currentTarget.style.borderColor = "var(--border-primary)"; }}
+          />
           <button
-            onClick={() => setShowKey(!showKey)}
-            style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: "var(--text-muted)", cursor: "pointer", padding: 2 }}
+            onClick={handleCopyKey}
+            disabled={loadingKey}
+            style={{ position: "absolute", right: 30, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: "var(--text-muted)", cursor: loadingKey ? "not-allowed" : "pointer", padding: 2, opacity: loadingKey ? 0.5 : 1 }}
+            title="复制 API Key"
+          >
+            {copied ? <Check size={13} /> : <Copy size={13} />}
+          </button>
+          <button
+            onClick={handleToggleKeyVisibility}
+            disabled={loadingKey}
+            style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: "var(--text-muted)", cursor: loadingKey ? "not-allowed" : "pointer", padding: 2, opacity: loadingKey ? 0.5 : 1 }}
+            title={showKey ? "隐藏 API Key" : "显示 API Key"}
           >
             {showKey ? <EyeOff size={13} /> : <Eye size={13} />}
           </button>
         </div>
       </div>
       <div>
-        <label style={labelStyle}>API 地址 (完整端点)</label>
+        <label style={labelStyle}>API 地址（根地址或完整路径均可）</label>
         <input type="text" value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)}
-          placeholder={apiFormat === "anthropic" ? "https://api.anthropic.com/v1/messages" : "https://api.deepseek.com/v1/chat/completions"}
+          placeholder={apiFormat === "anthropic" ? "http://host/gvclaude 或 …/v1/messages" : "https://api.deepseek.com 或 …/v1/chat/completions"}
           style={inputStyle} onFocus={focusBorder} onBlur={blurBorder}
         />
         <p style={{ fontSize: 9, color: "var(--text-muted)", marginTop: 2 }}>
-          {apiFormat === "anthropic" ? "例: https://api.anthropic.com/v1/messages 或 https://api.deepseek.com/anthropic/messages" : "例: https://api.deepseek.com/v1/chat/completions"}
+          {apiFormat === "anthropic"
+            ? "已完整以 /v1/messages 结尾则不变；仅以 /v1 结尾则补 /messages；否则补 /v1/messages。"
+            : "URL 已含 /chat/completions 则不变；仅以 /v1 结尾则补 /chat/completions；否则补 /v1/chat/completions。"}
         </p>
       </div>
       <div>
@@ -104,7 +191,7 @@ export default function SubscriptionForm({ id, subscription, onSaved, onCancel }
           <option value="openai">OpenAI 兼容 (chat/completions)</option>
           <option value="anthropic">Anthropic (messages API)</option>
         </select>
-        <p style={{ fontSize: 9, color: "var(--text-muted)", marginTop: 2 }}>仅影响请求体的 JSON 格式，不影响 URL</p>
+        <p style={{ fontSize: 9, color: "var(--text-muted)", marginTop: 2 }}>决定请求体格式；聊天时会按格式自动补全常见 API 路径。</p>
       </div>
 
       <div>

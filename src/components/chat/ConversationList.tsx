@@ -111,7 +111,7 @@ export default function ConversationList({ conversations, activeId, onSelect, on
             style={{
               position: "fixed", left: contextMenu.x, top: contextMenu.y, zIndex: 100,
               background: "var(--bg-secondary)", border: "1px solid var(--border-primary)",
-              borderRadius: 8, padding: 4, boxShadow: "0 4px 16px rgba(0,0,0,0.4)",
+              borderRadius: 8, padding: 4, boxShadow: "var(--shadow-menu)",
               minWidth: 120,
             }}
           >

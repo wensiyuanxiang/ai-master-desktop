@@ -3,13 +3,14 @@ import { Send, User, Bot, Folder, ChevronDown, Pin } from "lucide-react";
 import type { Message } from "@/types/message";
 import type { Role } from "@/types/role";
 import type { Subscription } from "@/types/subscription";
-import { listRoles, listSubscriptions, updateConversation } from "@/lib/tauri";
+import { listRoles, listSubscriptions, updateConversation, getConversation } from "@/lib/tauri";
+import { SUBSCRIPTIONS_CHANGED_EVENT } from "@/lib/subscriptionEvents";
 
 interface Props {
   messages: Message[];
   streamingText: string;
   isStreaming: boolean;
-  onSend: (content: string) => void;
+  onSend: (content: string, roleId: string | null) => void;
   activeConversationId: string | null;
   onSelectConversation: () => void;
 }
@@ -25,15 +26,43 @@ export default function ChatArea({ messages, streamingText, isStreaming, onSend,
   const [showModels, setShowModels] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
 
-  // Load roles and subscriptions on mount
   useEffect(() => {
     listRoles().then(setRoles).catch(() => {});
-    listSubscriptions().then((list) => {
-      setSubs(list);
-      const active = list.find((s) => s.is_active);
-      if (active) setSelectedSub(active.id);
-    }).catch(() => {});
   }, []);
+
+  const refreshSubsAndSyncConversation = useCallback(async () => {
+    const list = await listSubscriptions().catch(() => [] as Subscription[]);
+    setSubs(list);
+    const activeDefault = list.find((s) => s.is_active)?.id ?? null;
+    if (!activeConversationId) {
+      setSelectedSub(activeDefault);
+      return;
+    }
+    try {
+      const conv = await getConversation(activeConversationId);
+      const bound =
+        conv.subscription_id && conv.subscription_id.trim() !== ""
+          ? conv.subscription_id
+          : null;
+      setSelectedSub(bound || activeDefault);
+      setSelectedRole(conv.role_id);
+      setWorkingDir(conv.working_directory?.trim() ? conv.working_directory : "~");
+    } catch {
+      setSelectedSub(activeDefault);
+    }
+  }, [activeConversationId]);
+
+  useEffect(() => {
+    void refreshSubsAndSyncConversation();
+  }, [refreshSubsAndSyncConversation]);
+
+  useEffect(() => {
+    const onChanged = () => {
+      void refreshSubsAndSyncConversation();
+    };
+    window.addEventListener(SUBSCRIPTIONS_CHANGED_EVENT, onChanged);
+    return () => window.removeEventListener(SUBSCRIPTIONS_CHANGED_EVENT, onChanged);
+  }, [refreshSubsAndSyncConversation]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -73,7 +102,7 @@ export default function ChatArea({ messages, streamingText, isStreaming, onSend,
 
   const handleSend = () => {
     if (!input.trim() || isStreaming) return;
-    onSend(input.trim());
+    onSend(input.trim(), selectedRole);
     setInput("");
   };
 
@@ -116,7 +145,7 @@ export default function ChatArea({ messages, streamingText, isStreaming, onSend,
 
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-      <div ref={bottomRef && undefined as any} style={{ flex: 1, overflowY: "auto", padding: "16px 24px" }}>
+      <div style={{ flex: 1, overflowY: "auto", padding: "16px 24px" }}>
         {/* Empty state */}
         {messages.length === 0 && !isStreaming && (
           <div style={{ display: "flex", height: "100%", alignItems: "center", justifyContent: "center" }}>
@@ -185,7 +214,7 @@ export default function ChatArea({ messages, streamingText, isStreaming, onSend,
             {showRoles && (
               <>
                 <div style={{ position: "fixed", inset: 0, zIndex: 99 }} onClick={() => setShowRoles(false)} />
-                <div style={{ position: "absolute", bottom: "100%", left: 0, marginBottom: 4, width: 220, maxHeight: 240, overflowY: "auto", background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 8, zIndex: 100, boxShadow: "0 8px 32px rgba(0,0,0,0.5)" }}>
+                <div style={{ position: "absolute", bottom: "100%", left: 0, marginBottom: 4, width: 220, maxHeight: 240, overflowY: "auto", background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 8, zIndex: 100, boxShadow: "var(--shadow-popover)" }}>
                   <button onClick={() => handleRoleSelect(null)} style={dropdownItemStyle} onMouseEnter={hoverBg} onMouseLeave={resetBg}>无角色</button>
                   {roles.filter((r) => r.is_pinned).length > 0 && (
                     <>
@@ -221,7 +250,7 @@ export default function ChatArea({ messages, streamingText, isStreaming, onSend,
             {showModels && (
               <>
                 <div style={{ position: "fixed", inset: 0, zIndex: 99 }} onClick={() => setShowModels(false)} />
-                <div style={{ position: "absolute", bottom: "100%", left: 0, marginBottom: 4, width: 280, maxHeight: 240, overflowY: "auto", background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 8, zIndex: 100, boxShadow: "0 8px 32px rgba(0,0,0,0.5)" }}>
+                <div style={{ position: "absolute", bottom: "100%", left: 0, marginBottom: 4, width: 280, maxHeight: 240, overflowY: "auto", background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 8, zIndex: 100, boxShadow: "var(--shadow-popover)" }}>
                   {subs.map((s) => (
                     <button
                       key={s.id}

@@ -66,6 +66,10 @@ export async function getActiveSubscription(): Promise<Subscription | null> {
   return invoke<Subscription | null>("get_active_subscription");
 }
 
+export async function getSubscriptionApiKey(id: string): Promise<string> {
+  return invoke<string>("get_subscription_api_key", { id });
+}
+
 // Role
 export async function listRoles(
   search?: string,
@@ -153,9 +157,10 @@ export async function listMessages(
 
 export async function sendMessage(
   conversationId: string,
-  content: string
+  content: string,
+  roleId?: string | null
 ): Promise<void> {
-  return invoke<void>("send_message", { conversationId, content });
+  return invoke<void>("send_message", { conversationId, content, roleId });
 }
 
 // Config
@@ -242,4 +247,33 @@ export async function importAllData(
 
 export async function getAppVersion(): Promise<string> {
   return invoke<string>("get_app_version");
+}
+
+export async function runToolTerminalCommand(
+  command: string,
+  workingDirectory?: string
+): Promise<string> {
+  return invoke<string>("run_tool_terminal_command", {
+    command,
+    workingDirectory,
+  });
+}
+
+export async function writeToolTerminalInput(
+  sessionId: string,
+  input: string
+): Promise<void> {
+  return invoke<void>("write_tool_terminal_input", { sessionId, input });
+}
+
+export async function resizeToolTerminal(
+  sessionId: string,
+  cols: number,
+  rows: number
+): Promise<void> {
+  return invoke<void>("resize_tool_terminal", { sessionId, cols, rows });
+}
+
+export async function closeToolTerminal(sessionId: string): Promise<void> {
+  return invoke<void>("close_tool_terminal", { sessionId });
 }

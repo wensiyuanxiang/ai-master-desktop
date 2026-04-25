@@ -6,3 +6,4 @@ pub mod message;
 pub mod provider;
 pub mod role;
 pub mod subscription;
+pub mod tool_terminal;

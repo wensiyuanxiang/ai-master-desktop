@@ -56,8 +56,16 @@ pub fn write_config_partial(
         )?;
 
     let api_key = crate::services::crypto::decrypt(&api_key_encrypted, &state.crypto_key)?;
-    let new_content = config_file::apply_partial(&tool_name, &api_key, &base_url, &model)?;
-    let backup_id = config_file::write_config_and_backup(&app_handle, &tool_name, &sub_name, &new_content)?;
+    let claude_sid = (tool_name == "claude_code").then_some(subscription_id.as_str());
+    let new_content =
+        config_file::apply_partial(&tool_name, &api_key, &base_url, &model, claude_sid)?;
+    let backup_id = config_file::write_config_and_backup(
+        &app_handle,
+        &tool_name,
+        &sub_name,
+        claude_sid,
+        &new_content,
+    )?;
 
     Ok(ConfigWriteResult {
         success: true,
@@ -75,7 +83,13 @@ pub fn write_config_full(
     serde_json::from_str::<serde_json::Value>(&content)
         .map_err(|e| AppError::Validation(format!("Invalid JSON: {}", e)))?;
 
-    let backup_id = config_file::write_config_and_backup(&app_handle, &tool_name, "", &content)?;
+    let backup_id = config_file::write_config_and_backup(
+        &app_handle,
+        &tool_name,
+        "",
+        None,
+        &content,
+    )?;
 
     Ok(ConfigWriteResult {
         success: true,
@@ -101,5 +115,6 @@ pub fn preview_config(
         )?;
 
     let api_key = crate::services::crypto::decrypt(&api_key_encrypted, &state.crypto_key)?;
-    config_file::apply_partial(&tool_name, &api_key, &base_url, &model)
+    let claude_sid = (tool_name == "claude_code").then_some(subscription_id.as_str());
+    config_file::apply_partial(&tool_name, &api_key, &base_url, &model, claude_sid)
 }

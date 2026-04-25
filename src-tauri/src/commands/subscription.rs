@@ -192,6 +192,22 @@ pub fn get_active_subscription(app_handle: tauri::AppHandle) -> AppResult<Option
     }
 }
 
+#[tauri::command]
+pub fn get_subscription_api_key(
+    app_handle: tauri::AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+) -> AppResult<String> {
+    let conn = db::open_connection(&app_handle)?;
+    let encrypted: String = conn.query_row(
+        "SELECT api_key_encrypted FROM subscriptions WHERE id = ?1",
+        rusqlite::params![id],
+        |row| row.get(0),
+    )?;
+    let decrypted = crypto::decrypt(&encrypted, &state.crypto_key)?;
+    Ok(decrypted)
+}
+
 fn query_by_id(conn: &rusqlite::Connection, id: &str) -> AppResult<Subscription> {
     let sql = format!("SELECT {} FROM subscriptions WHERE id = ?1", SELECT_FIELDS);
     Ok(conn.query_row(&sql, [id], row_to_subscription)?)

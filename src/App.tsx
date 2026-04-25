@@ -15,6 +15,7 @@ import type { Role } from "./types/role";
 import type { Subscription } from "./types/subscription";
 import type { ToolConfigInfo } from "./types/backup";
 import { getActiveSubscription } from "./lib/tauri";
+import { SUBSCRIPTIONS_CHANGED_EVENT, notifySubscriptionsChanged } from "./lib/subscriptionEvents";
 
 type NavItem = "chat" | "tools" | "models" | "settings";
 
@@ -25,12 +26,22 @@ export default function App() {
   const [activeModel, setActiveModel] = useState<string>("");
 
   useEffect(() => {
-    getActiveSubscription().then((sub) => {
-      if (sub) {
-        setActiveSub(sub.name);
-        setActiveModel(sub.model);
-      }
-    }).catch(() => {});
+    const refreshStatusSubscription = () => {
+      getActiveSubscription()
+        .then((sub) => {
+          if (sub) {
+            setActiveSub(sub.name);
+            setActiveModel(sub.model);
+          } else {
+            setActiveSub("");
+            setActiveModel("");
+          }
+        })
+        .catch(() => {});
+    };
+    refreshStatusSubscription();
+    window.addEventListener(SUBSCRIPTIONS_CHANGED_EVENT, refreshStatusSubscription);
+    return () => window.removeEventListener(SUBSCRIPTIONS_CHANGED_EVENT, refreshStatusSubscription);
   }, []);
 
   const openPanel = (type: string, props?: Record<string, unknown>) =>
@@ -57,7 +68,10 @@ export default function App() {
         return <SubscriptionForm
           id={props?.id as string | undefined}
           subscription={props?.subscription as Subscription | undefined}
-          onSaved={closePanel}
+          onSaved={() => {
+            closePanel();
+            notifySubscriptionsChanged();
+          }}
           onCancel={closePanel}
         />;
       case "toolConfig":

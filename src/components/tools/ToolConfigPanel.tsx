@@ -58,6 +58,12 @@ export default function ToolConfigPanel({ tool, onClose: _ }: Props) {
       <div style={sectionStyle}>
         <label style={labelStyle}>配置文件路径</label>
         <p style={{ fontSize: 10, color: "var(--text-secondary)", fontFamily: "inherit" }}>{tool.config_path}</p>
+        {tool.tool_name === "claude_code" && (
+          <p style={{ fontSize: 9, color: "var(--text-muted)", marginTop: 6, lineHeight: 1.45 }}>
+            「仅替换 Key/URL/Model」会先写入每套餐独立文件 <code style={{ fontSize: 9 }}>~/.claude/ai-master/packages/&lt;套餐ID&gt;.json</code>，
+            再将当前 <code style={{ fontSize: 9 }}>settings.json</code> 复制到 <code style={{ fontSize: 9 }}>~/.claude/backup/settings.before-apply.*.json</code> 后覆盖生效配置。
+          </p>
+        )}
       </div>
 
       <div style={sectionStyle}>
