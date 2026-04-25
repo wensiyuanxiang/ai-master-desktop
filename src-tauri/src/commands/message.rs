@@ -55,6 +55,7 @@ pub async fn send_message(
     conversation_id: String,
     content: String,
     role_id: Option<String>,
+    subscription_id: Option<String>,
 ) -> AppResult<()> {
     // Save user message synchronously
     let ctx = {
@@ -69,14 +70,37 @@ pub async fn send_message(
             rusqlite::params![conversation_id],
         )?;
 
-        let subscription_id: Option<String> = conn
+        let conv_subscription_id: Option<String> = conn
             .query_row(
                 "SELECT subscription_id FROM conversations WHERE id = ?1",
                 [&conversation_id],
                 |row| row.get::<_, Option<String>>(0),
             )?;
-        let subscription_id = subscription_id
+
+        let from_client = subscription_id
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+
+        let resolved_subscription_id = from_client
+            .clone()
+            .or_else(|| {
+                conv_subscription_id
+                    .clone()
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+            })
             .ok_or_else(|| AppError::Validation("No subscription selected".to_string()))?;
+
+        if let Some(ref sid) = from_client {
+            if conv_subscription_id.as_deref() != Some(sid.as_str()) {
+                conn.execute(
+                    "UPDATE conversations SET subscription_id = ?1, updated_at = datetime('now') WHERE id = ?2",
+                    rusqlite::params![sid, conversation_id],
+                )?;
+            }
+        }
+
+        let subscription_id = resolved_subscription_id;
 
         let (api_key_encrypted, base_url, model, api_format): (String, String, String, String) = conn.query_row(
             "SELECT api_key_encrypted, base_url, model, api_format FROM subscriptions WHERE id = ?1",

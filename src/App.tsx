@@ -16,33 +16,60 @@ import type { Subscription } from "./types/subscription";
 import type { ToolConfigInfo } from "./types/backup";
 import { getActiveSubscription } from "./lib/tauri";
 import { SUBSCRIPTIONS_CHANGED_EVENT, notifySubscriptionsChanged } from "./lib/subscriptionEvents";
+import {
+  CHAT_SESSION_SUBSCRIPTION_EVENT,
+  type ChatSessionSubscriptionDetail,
+} from "./lib/chatStatusEvents";
 
 type NavItem = "chat" | "tools" | "models" | "settings";
 
 export default function App() {
   const [activeNav, setActiveNav] = useState<NavItem>("chat");
   const [panel, setPanel] = useState<{ type: string; props?: Record<string, unknown> } | null>(null);
-  const [activeSub, setActiveSub] = useState<string>("");
-  const [activeModel, setActiveModel] = useState<string>("");
+  const [globalSubName, setGlobalSubName] = useState("");
+  const [globalModelName, setGlobalModelName] = useState("");
+  const [chatSessionSub, setChatSessionSub] = useState<{ name: string; model: string } | null>(null);
 
   useEffect(() => {
-    const refreshStatusSubscription = () => {
+    const refreshGlobal = () => {
       getActiveSubscription()
         .then((sub) => {
           if (sub) {
-            setActiveSub(sub.name);
-            setActiveModel(sub.model);
+            setGlobalSubName(sub.name);
+            setGlobalModelName(sub.model);
           } else {
-            setActiveSub("");
-            setActiveModel("");
+            setGlobalSubName("");
+            setGlobalModelName("");
           }
         })
         .catch(() => {});
     };
-    refreshStatusSubscription();
-    window.addEventListener(SUBSCRIPTIONS_CHANGED_EVENT, refreshStatusSubscription);
-    return () => window.removeEventListener(SUBSCRIPTIONS_CHANGED_EVENT, refreshStatusSubscription);
+    refreshGlobal();
+    window.addEventListener(SUBSCRIPTIONS_CHANGED_EVENT, refreshGlobal);
+    return () => window.removeEventListener(SUBSCRIPTIONS_CHANGED_EVENT, refreshGlobal);
   }, []);
+
+  useEffect(() => {
+    const onChatSession = (ev: Event) => {
+      const ce = ev as CustomEvent<ChatSessionSubscriptionDetail>;
+      const d = ce.detail;
+      if (d && d.name) setChatSessionSub({ name: d.name, model: d.model });
+      else setChatSessionSub(null);
+    };
+    window.addEventListener(CHAT_SESSION_SUBSCRIPTION_EVENT, onChatSession);
+    return () => window.removeEventListener(CHAT_SESSION_SUBSCRIPTION_EVENT, onChatSession);
+  }, []);
+
+  useEffect(() => {
+    if (activeNav !== "chat") setChatSessionSub(null);
+  }, [activeNav]);
+
+  const statusSubName =
+    activeNav === "chat" && chatSessionSub
+      ? `本对话 · ${chatSessionSub.name}`
+      : globalSubName;
+  const statusModelName =
+    activeNav === "chat" && chatSessionSub ? chatSessionSub.model : globalModelName;
 
   const openPanel = (type: string, props?: Record<string, unknown>) =>
     setPanel({ type, props });
@@ -100,7 +127,7 @@ export default function App() {
           {activeNav === "models" && <ModelsPage openPanel={openPanel} />}
           {activeNav === "settings" && <SettingsPage />}
         </div>
-        <StatusBar subName={activeSub} modelName={activeModel} />
+        <StatusBar subName={statusSubName} modelName={statusModelName} />
       </div>
       <SlidePanel isOpen={panel !== null} onClose={closePanel}>
         {renderPanelContent()}

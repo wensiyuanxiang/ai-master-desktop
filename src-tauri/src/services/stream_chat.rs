@@ -25,13 +25,23 @@ fn extract_sse_data(line: &str) -> Option<&str> {
     Some(trimmed)
 }
 
-/// Anthropic Messages：常见 POST 为 `.../v1/messages`；若已以 `/v1` 结尾则只补 `/messages`。
+/// Anthropic Messages：常见 POST 为 `.../v1/messages`。
+/// DeepSeek 等文档常写根地址 `https://api.deepseek.com/anthropic`，也有误填 `.../anthropic/messages`；
+/// 若已以 `/messages` 结尾且不是 `/v1/messages`，会先去掉尾部 `/messages` 再拼 `/v1/messages`，避免出现 `.../messages/v1/messages` 导致 404。
 fn anthropic_messages_post_url(base_url: &str) -> String {
     let trimmed = base_url.trim().trim_end_matches('/');
     if trimmed.is_empty() {
         return base_url.to_string();
     }
     if trimmed.ends_with("/v1/messages") {
+        return trimmed.to_string();
+    }
+    // Misconfig: .../anthropic/messages → .../anthropic + /v1/messages
+    if trimmed.ends_with("/messages") {
+        let base = trimmed.trim_end_matches("/messages").trim_end_matches('/');
+        if !base.is_empty() {
+            return format!("{}/v1/messages", base);
+        }
         return trimmed.to_string();
     }
     if trimmed.ends_with("/v1") {

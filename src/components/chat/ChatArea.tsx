@@ -5,12 +5,14 @@ import type { Role } from "@/types/role";
 import type { Subscription } from "@/types/subscription";
 import { listRoles, listSubscriptions, updateConversation, getConversation } from "@/lib/tauri";
 import { SUBSCRIPTIONS_CHANGED_EVENT } from "@/lib/subscriptionEvents";
+import { notifyChatSessionSubscription } from "@/lib/chatStatusEvents";
+import { toast } from "sonner";
 
 interface Props {
   messages: Message[];
   streamingText: string;
   isStreaming: boolean;
-  onSend: (content: string, roleId: string | null) => void;
+  onSend: (content: string, roleId: string | null, subscriptionId: string | null) => void;
   activeConversationId: string | null;
   onSelectConversation: () => void;
 }
@@ -36,19 +38,30 @@ export default function ChatArea({ messages, streamingText, isStreaming, onSend,
     const activeDefault = list.find((s) => s.is_active)?.id ?? null;
     if (!activeConversationId) {
       setSelectedSub(activeDefault);
+      notifyChatSessionSubscription(null);
       return;
     }
+    let effectiveSubId: string | null = activeDefault;
     try {
       const conv = await getConversation(activeConversationId);
       const bound =
         conv.subscription_id && conv.subscription_id.trim() !== ""
           ? conv.subscription_id
           : null;
-      setSelectedSub(bound || activeDefault);
+      effectiveSubId = bound || activeDefault;
+      setSelectedSub(effectiveSubId);
       setSelectedRole(conv.role_id);
       setWorkingDir(conv.working_directory?.trim() ? conv.working_directory : "~");
     } catch {
       setSelectedSub(activeDefault);
+      effectiveSubId = activeDefault;
+    }
+    if (effectiveSubId) {
+      const sub = list.find((s) => s.id === effectiveSubId);
+      if (sub) notifyChatSessionSubscription({ name: sub.name, model: sub.model });
+      else notifyChatSessionSubscription(null);
+    } else {
+      notifyChatSessionSubscription(null);
     }
   }, [activeConversationId]);
 
@@ -75,7 +88,12 @@ export default function ChatArea({ messages, streamingText, isStreaming, onSend,
     if (activeConversationId) {
       try {
         await updateConversation(activeConversationId, { subscription_id: subId });
-      } catch { /* ignore */ }
+        const list = await listSubscriptions().catch(() => [] as Subscription[]);
+        const sub = list.find((s) => s.id === subId);
+        if (sub) notifyChatSessionSubscription({ name: sub.name, model: sub.model });
+      } catch {
+        toast.error("切换模型失败，请重试");
+      }
     }
   }, [activeConversationId]);
 
@@ -102,7 +120,7 @@ export default function ChatArea({ messages, streamingText, isStreaming, onSend,
 
   const handleSend = () => {
     if (!input.trim() || isStreaming) return;
-    onSend(input.trim(), selectedRole);
+    onSend(input.trim(), selectedRole, selectedSub);
     setInput("");
   };
 

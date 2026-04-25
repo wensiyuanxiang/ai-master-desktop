@@ -158,9 +158,15 @@ export async function listMessages(
 export async function sendMessage(
   conversationId: string,
   content: string,
-  roleId?: string | null
+  roleId?: string | null,
+  subscriptionId?: string | null
 ): Promise<void> {
-  return invoke<void>("send_message", { conversationId, content, roleId });
+  return invoke<void>("send_message", {
+    conversationId,
+    content,
+    roleId,
+    subscriptionId,
+  });
 }
 
 // Config
