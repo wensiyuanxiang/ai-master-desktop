@@ -1,6 +1,8 @@
+use crate::commands::endpoint;
 use crate::db;
 use crate::error::{AppError, AppResult};
-use crate::services::{AppState, config_file};
+use crate::services::config_file::{self, BackupRefs};
+use crate::services::AppState;
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
@@ -48,7 +50,7 @@ pub fn write_config_partial(
 ) -> AppResult<ConfigWriteResult> {
     let conn = db::open_connection(&app_handle)?;
 
-    let (api_key_encrypted, base_url, model, sub_name): (String, String, String, String) = conn
+    let (api_key_encrypted, sub_base_url, sub_model, sub_name): (String, String, String, String) = conn
         .query_row(
             "SELECT api_key_encrypted, base_url, model, name FROM subscriptions WHERE id = ?1",
             [&subscription_id],
@@ -56,14 +58,24 @@ pub fn write_config_partial(
         )?;
 
     let api_key = crate::services::crypto::decrypt(&api_key_encrypted, &state.crypto_key)?;
+    let endpoint = endpoint::resolve_endpoint(&conn, &subscription_id, None)?;
+    let (base_url, model, endpoint_id) = match endpoint {
+        Some(ep) => (ep.base_url, ep.model, Some(ep.id)),
+        None => (sub_base_url, sub_model, None),
+    };
     let claude_sid = (tool_name == "claude_code").then_some(subscription_id.as_str());
     let new_content =
         config_file::apply_partial(&tool_name, &api_key, &base_url, &model, claude_sid)?;
+    let refs = BackupRefs {
+        subscription_id: Some(subscription_id.as_str()),
+        endpoint_id: endpoint_id.as_deref(),
+        preset_id: None,
+    };
     let backup_id = config_file::write_config_and_backup(
         &app_handle,
         &tool_name,
         &sub_name,
-        claude_sid,
+        &refs,
         &new_content,
     )?;
 
@@ -87,7 +99,7 @@ pub fn write_config_full(
         &app_handle,
         &tool_name,
         "",
-        None,
+        &BackupRefs::empty(),
         &content,
     )?;
 
@@ -107,7 +119,7 @@ pub fn preview_config(
 ) -> AppResult<String> {
     let conn = db::open_connection(&app_handle)?;
 
-    let (api_key_encrypted, base_url, model): (String, String, String) = conn
+    let (api_key_encrypted, sub_base_url, sub_model): (String, String, String) = conn
         .query_row(
             "SELECT api_key_encrypted, base_url, model FROM subscriptions WHERE id = ?1",
             [&subscription_id],
@@ -115,6 +127,11 @@ pub fn preview_config(
         )?;
 
     let api_key = crate::services::crypto::decrypt(&api_key_encrypted, &state.crypto_key)?;
+    let endpoint = endpoint::resolve_endpoint(&conn, &subscription_id, None)?;
+    let (base_url, model) = match endpoint {
+        Some(ep) => (ep.base_url, ep.model),
+        None => (sub_base_url, sub_model),
+    };
     let claude_sid = (tool_name == "claude_code").then_some(subscription_id.as_str());
     config_file::apply_partial(&tool_name, &api_key, &base_url, &model, claude_sid)
 }

@@ -40,6 +40,7 @@ CREATE TABLE IF NOT EXISTS conversations (
     id TEXT PRIMARY KEY,
     title TEXT NOT NULL DEFAULT 'New Chat',
     subscription_id TEXT REFERENCES subscriptions(id) ON DELETE SET NULL,
+    endpoint_id TEXT REFERENCES subscription_endpoints(id) ON DELETE SET NULL,
     role_id TEXT REFERENCES roles(id) ON DELETE SET NULL,
     working_directory TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -62,6 +63,41 @@ CREATE TABLE IF NOT EXISTS config_backups (
     content TEXT NOT NULL,
     checksum TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS subscription_endpoints (
+    id TEXT PRIMARY KEY,
+    subscription_id TEXT NOT NULL REFERENCES subscriptions(id) ON DELETE CASCADE,
+    api_format TEXT NOT NULL CHECK(api_format IN ('openai','anthropic')),
+    base_url TEXT NOT NULL,
+    model TEXT NOT NULL DEFAULT '',
+    is_default INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_endpoints_sub ON subscription_endpoints(subscription_id);
+
+CREATE TABLE IF NOT EXISTS tool_subscription_configs (
+    id TEXT PRIMARY KEY,
+    tool_name TEXT NOT NULL,
+    subscription_id TEXT NOT NULL REFERENCES subscriptions(id) ON DELETE CASCADE,
+    endpoint_id TEXT REFERENCES subscription_endpoints(id) ON DELETE SET NULL,
+    rendered_json TEXT NOT NULL,
+    is_overridden INTEGER NOT NULL DEFAULT 0,
+    notes TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(tool_name, subscription_id, endpoint_id)
+);
+CREATE INDEX IF NOT EXISTS idx_presets_tool ON tool_subscription_configs(tool_name);
+CREATE INDEX IF NOT EXISTS idx_presets_sub ON tool_subscription_configs(subscription_id);
+
+CREATE TABLE IF NOT EXISTS tool_active_state (
+    tool_name TEXT PRIMARY KEY,
+    active_subscription_id TEXT REFERENCES subscriptions(id) ON DELETE SET NULL,
+    active_endpoint_id     TEXT REFERENCES subscription_endpoints(id) ON DELETE SET NULL,
+    active_preset_id       TEXT REFERENCES tool_subscription_configs(id) ON DELETE SET NULL,
+    applied_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 ";
 
@@ -118,9 +154,67 @@ pub fn init_db(app_handle: &tauri::AppHandle) -> AppResult<()> {
     conn.execute_batch(
         "ALTER TABLE subscriptions ADD COLUMN api_format TEXT NOT NULL DEFAULT 'openai';"
     ).ok();
+    // Migration: backups can now be linked to specific subscription/endpoint/preset ids.
+    // Old `subscription_name` column kept as fallback display when those id columns are NULL
+    // (e.g. backups created before this migration, or after the linked subscription was deleted).
+    conn.execute_batch(
+        "ALTER TABLE config_backups ADD COLUMN subscription_id TEXT;"
+    ).ok();
+    conn.execute_batch(
+        "ALTER TABLE config_backups ADD COLUMN endpoint_id TEXT;"
+    ).ok();
+    conn.execute_batch(
+        "ALTER TABLE config_backups ADD COLUMN preset_id TEXT;"
+    ).ok();
+    // Conversations remember which endpoint (within a subscription) they last used so the
+    // picker can preselect both subscription and protocol on reopen.
+    conn.execute_batch(
+        "ALTER TABLE conversations ADD COLUMN endpoint_id TEXT;"
+    ).ok();
+    // Subscription portal credentials: optional admin URL + login pair so users can jump
+    // straight to the provider console from the card. Password is stored encrypted with the
+    // same crypto_key as api_key_encrypted, never returned in plaintext via list APIs.
+    conn.execute_batch(
+        "ALTER TABLE subscriptions ADD COLUMN admin_url TEXT NOT NULL DEFAULT '';"
+    ).ok();
+    conn.execute_batch(
+        "ALTER TABLE subscriptions ADD COLUMN username TEXT NOT NULL DEFAULT '';"
+    ).ok();
+    conn.execute_batch(
+        "ALTER TABLE subscriptions ADD COLUMN password_encrypted TEXT NOT NULL DEFAULT '';"
+    ).ok();
     conn.execute_batch(SEED_PROVIDERS_SQL)?;
     conn.execute_batch(SEED_ROLES_SQL)?;
+    backfill_default_endpoints(&conn)?;
 
+    Ok(())
+}
+
+/// One-time backfill: every subscription must own at least one endpoint so that the new
+/// endpoint-aware code paths have something to route to. We synthesize one from the legacy
+/// `base_url/model/api_format` columns and mark it as the default.
+fn backfill_default_endpoints(conn: &Connection) -> AppResult<()> {
+    let mut stmt = conn.prepare(
+        "SELECT s.id, s.api_format, s.base_url, s.model
+         FROM subscriptions s
+         WHERE NOT EXISTS (
+             SELECT 1 FROM subscription_endpoints e WHERE e.subscription_id = s.id
+         )"
+    )?;
+    let rows: Vec<(String, String, String, String)> = stmt
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)))?
+        .collect::<Result<Vec<_>, _>>()?;
+    drop(stmt);
+
+    for (sub_id, api_format, base_url, model) in rows {
+        let id = uuid::Uuid::new_v4().to_string();
+        let fmt = if api_format == "anthropic" { "anthropic" } else { "openai" };
+        conn.execute(
+            "INSERT INTO subscription_endpoints (id, subscription_id, api_format, base_url, model, is_default) \
+             VALUES (?1, ?2, ?3, ?4, ?5, 1)",
+            rusqlite::params![id, sub_id, fmt, base_url, model],
+        )?;
+    }
     Ok(())
 }
 

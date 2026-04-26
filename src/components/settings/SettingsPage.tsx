@@ -1,6 +1,12 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { exportAllData, importAllData, getAppVersion } from "@/lib/tauri";
+import {
+  exportAllData,
+  importAllData,
+  getAppVersion,
+  exportConfigBundle,
+  importConfigBundle,
+} from "@/lib/tauri";
 import { toast } from "sonner";
 import { useTheme } from "@/theme/ThemeProvider";
 import type { AppTheme } from "@/lib/theme";
@@ -42,6 +48,37 @@ export default function SettingsPage() {
       }
     } catch {
       toast.error("导入失败");
+    }
+  };
+
+  const handleExportBundle = async () => {
+    try {
+      const { save } = await import("@tauri-apps/plugin-dialog");
+      const dest = await save({
+        defaultPath: "ai-master-config-bundle.json",
+        filters: [{ name: "JSON", extensions: ["json"] }],
+      });
+      if (dest) {
+        await exportConfigBundle(dest);
+        toast.success("配置包已导出");
+      }
+    } catch (e) {
+      toast.error(`导出配置包失败: ${(e as Error).message ?? e}`);
+    }
+  };
+
+  const handleImportBundle = async () => {
+    try {
+      const { open } = await import("@tauri-apps/plugin-dialog");
+      const file = await open({ multiple: false, filters: [{ name: "JSON", extensions: ["json"] }] });
+      if (file && typeof file === "string") {
+        const r = await importConfigBundle(file);
+        toast.success(
+          `导入: ${r.subscriptions_imported}套餐 / ${r.endpoints_imported}端点 / ${r.presets_imported}预案 / ${r.backups_imported}备份`
+        );
+      }
+    } catch (e) {
+      toast.error(`导入配置包失败: ${(e as Error).message ?? e}`);
     }
   };
 
@@ -144,6 +181,41 @@ export default function SettingsPage() {
           <span style={{ color: "var(--text-secondary)" }}>{t("settings.import_data")}</span>
           <button
             onClick={handleImport}
+            style={btnStyle}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.background = "var(--accent-bg)";
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background = "none";
+            }}
+          >
+            {t("common.import")}
+          </button>
+        </div>
+        <div style={{ ...rowStyle, alignItems: "flex-start", flexWrap: "wrap", gap: 8 }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4, minWidth: 0, flex: 1 }}>
+            <span style={{ color: "var(--text-secondary)" }}>导出配置包</span>
+            <span style={{ color: "var(--text-muted)", fontSize: 10, lineHeight: 1.45 }}>
+              包含套餐、端点、工具预案、生效状态与备份的快照（API Key 沿用本机加密，跨机导入需保持密钥一致）
+            </span>
+          </div>
+          <button
+            onClick={handleExportBundle}
+            style={btnStyle}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.background = "var(--accent-bg)";
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background = "none";
+            }}
+          >
+            {t("common.export")}
+          </button>
+        </div>
+        <div style={rowStyle}>
+          <span style={{ color: "var(--text-secondary)" }}>导入配置包</span>
+          <button
+            onClick={handleImportBundle}
             style={btnStyle}
             onMouseEnter={(e) => {
               e.currentTarget.style.background = "var(--accent-bg)";

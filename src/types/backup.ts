@@ -5,6 +5,9 @@ export interface ConfigBackup {
   file_path: string;
   checksum: string;
   created_at: string;
+  subscription_id: string | null;
+  endpoint_id: string | null;
+  preset_id: string | null;
 }
 
 export interface ConfigWriteResult {

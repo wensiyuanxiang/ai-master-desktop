@@ -4,6 +4,7 @@ export const CHAT_SESSION_SUBSCRIPTION_EVENT = "ai-master-chat-session-subscript
 export type ChatSessionSubscriptionDetail = {
   name: string;
   model: string;
+  apiFormat?: "openai" | "anthropic";
 } | null;
 
 export function notifyChatSessionSubscription(detail: ChatSessionSubscriptionDetail) {

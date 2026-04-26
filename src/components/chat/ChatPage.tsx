@@ -136,7 +136,12 @@ export default function ChatPage({ openPanel }: Props) {
     }
   };
 
-  const handleSend = async (content: string, roleId: string | null, subscriptionId: string | null) => {
+  const handleSend = async (
+    content: string,
+    roleId: string | null,
+    subscriptionId: string | null,
+    endpointId: string | null,
+  ) => {
     if (!activeId || !content.trim()) return;
     // Add user message to UI optimistically
     const userMsg: Message = {
@@ -153,7 +158,7 @@ export default function ChatPage({ openPanel }: Props) {
 
     try {
       // Fire-and-forget - response handled by event listener
-      await sendMessage(activeId, content, roleId, subscriptionId);
+      await sendMessage(activeId, content, roleId, subscriptionId, endpointId);
     } catch (e: any) {
       setIsStreaming(false);
       toast.error(`发送失败: ${extractError(e)}`);

@@ -4,6 +4,9 @@ import type {
   Subscription,
   CreateSubscriptionInput,
   UpdateSubscriptionInput,
+  SubscriptionEndpoint,
+  CreateEndpointInput,
+  UpdateEndpointInput,
 } from "@/types/subscription";
 import type { Role, CreateRoleInput, UpdateRoleInput } from "@/types/role";
 import type { Conversation, CreateConversationInput } from "@/types/conversation";
@@ -14,6 +17,7 @@ import type {
   ConfigFileContent,
   ToolConfigInfo,
 } from "@/types/backup";
+import type { ToolPreset, ToolActiveStateView } from "@/types/toolPreset";
 
 // Provider
 export async function listProviders(): Promise<Provider[]> {
@@ -68,6 +72,40 @@ export async function getActiveSubscription(): Promise<Subscription | null> {
 
 export async function getSubscriptionApiKey(id: string): Promise<string> {
   return invoke<string>("get_subscription_api_key", { id });
+}
+
+export async function getSubscriptionPassword(id: string): Promise<string> {
+  return invoke<string>("get_subscription_password", { id });
+}
+
+// Subscription endpoints
+export async function listEndpoints(
+  subscriptionId: string
+): Promise<SubscriptionEndpoint[]> {
+  return invoke<SubscriptionEndpoint[]>("list_endpoints", { subscriptionId });
+}
+
+export async function createEndpoint(
+  input: CreateEndpointInput
+): Promise<SubscriptionEndpoint> {
+  return invoke<SubscriptionEndpoint>("create_endpoint", { input });
+}
+
+export async function updateEndpoint(
+  id: string,
+  input: UpdateEndpointInput
+): Promise<SubscriptionEndpoint> {
+  return invoke<SubscriptionEndpoint>("update_endpoint", { id, input });
+}
+
+export async function deleteEndpoint(id: string): Promise<void> {
+  return invoke<void>("delete_endpoint", { id });
+}
+
+export async function setDefaultEndpoint(
+  id: string
+): Promise<SubscriptionEndpoint> {
+  return invoke<SubscriptionEndpoint>("set_default_endpoint", { id });
 }
 
 // Role
@@ -130,6 +168,7 @@ export async function updateConversation(
   fields: Partial<{
     title: string;
     subscription_id: string;
+    endpoint_id: string;
     role_id: string;
     working_directory: string;
   }>
@@ -159,13 +198,15 @@ export async function sendMessage(
   conversationId: string,
   content: string,
   roleId?: string | null,
-  subscriptionId?: string | null
+  subscriptionId?: string | null,
+  endpointId?: string | null
 ): Promise<void> {
   return invoke<void>("send_message", {
     conversationId,
     content,
     roleId,
     subscriptionId,
+    endpointId,
   });
 }
 
@@ -233,6 +274,62 @@ export async function exportAllBackups(
   return invoke<void>("export_all_backups", { toolName, destDir });
 }
 
+// Tool presets
+export async function listToolPresets(toolName: string): Promise<ToolPreset[]> {
+  return invoke<ToolPreset[]>("list_tool_presets", { toolName });
+}
+
+export async function renderToolPreset(
+  toolName: string,
+  subscriptionId: string,
+  endpointId?: string | null
+): Promise<ToolPreset> {
+  return invoke<ToolPreset>("render_tool_preset", {
+    toolName,
+    subscriptionId,
+    endpointId: endpointId ?? null,
+  });
+}
+
+export async function deleteToolPreset(presetId: string): Promise<void> {
+  return invoke<void>("delete_tool_preset", { presetId });
+}
+
+export async function overrideToolPreset(
+  presetId: string,
+  rawJson: string
+): Promise<ToolPreset> {
+  return invoke<ToolPreset>("override_tool_preset", { presetId, rawJson });
+}
+
+export async function discardPresetOverride(
+  presetId: string
+): Promise<ToolPreset> {
+  return invoke<ToolPreset>("discard_preset_override", { presetId });
+}
+
+export async function applyToolPreset(
+  presetId: string
+): Promise<ToolActiveStateView> {
+  return invoke<ToolActiveStateView>("apply_tool_preset", { presetId });
+}
+
+export async function getToolActive(
+  toolName: string
+): Promise<ToolActiveStateView> {
+  return invoke<ToolActiveStateView>("get_tool_active", { toolName });
+}
+
+export async function resyncSubscriptionPresets(
+  subscriptionId: string
+): Promise<string[]> {
+  return invoke<string[]>("resync_subscription_presets", { subscriptionId });
+}
+
+export async function listToolActiveStates(): Promise<ToolActiveStateView[]> {
+  return invoke<ToolActiveStateView[]>("list_tool_active_states");
+}
+
 // Export/Import
 export async function exportAllData(destPath: string): Promise<void> {
   return invoke<void>("export_all_data", { destPath });
@@ -253,6 +350,25 @@ export async function importAllData(
 
 export async function getAppVersion(): Promise<string> {
   return invoke<string>("get_app_version");
+}
+
+// Configuration bundle (subscriptions + endpoints + presets + backups)
+export interface ConfigBundleImportResult {
+  providers_imported: number;
+  subscriptions_imported: number;
+  endpoints_imported: number;
+  presets_imported: number;
+  backups_imported: number;
+}
+
+export async function exportConfigBundle(destPath: string): Promise<void> {
+  return invoke<void>("export_config_bundle", { destPath });
+}
+
+export async function importConfigBundle(
+  filePath: string
+): Promise<ConfigBundleImportResult> {
+  return invoke<ConfigBundleImportResult>("import_config_bundle", { filePath });
 }
 
 export async function runToolTerminalCommand(

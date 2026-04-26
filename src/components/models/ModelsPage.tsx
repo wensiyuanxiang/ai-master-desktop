@@ -1,9 +1,18 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
-import { Plus, Search, Zap, Pin, ArrowUpDown } from "lucide-react";
-import { listProviders, listSubscriptions, deleteSubscription, setActiveSubscription } from "@/lib/tauri";
+import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
+import { Plus, Search, Zap, Pin, ArrowUpDown, Eye, EyeOff, Copy, Check, User, ChevronDown } from "lucide-react";
+import {
+  listProviders,
+  listSubscriptions,
+  deleteSubscription,
+  setActiveSubscription,
+  listEndpoints,
+  getSubscriptionPassword,
+} from "@/lib/tauri";
 import { notifySubscriptionsChanged } from "@/lib/subscriptionEvents";
+import { openExternalUrl } from "@/lib/openExternal";
 import type { Provider } from "@/types/provider";
-import type { Subscription } from "@/types/subscription";
+import type { Subscription, SubscriptionEndpoint } from "@/types/subscription";
 import { toast } from "sonner";
 
 interface Props {
@@ -19,6 +28,10 @@ export default function ModelsPage({ openPanel }: Props) {
   const [stateFilter, setStateFilter] = useState("all");
   const [sortBy, setSortBy] = useState<"default" | "name" | "provider" | "updated_at">("default");
   const [pinnedIds, setPinnedIds] = useState<string[]>([]);
+  const [endpointsBySub, setEndpointsBySub] = useState<Record<string, SubscriptionEndpoint[]>>({});
+  const [revealedPasswords, setRevealedPasswords] = useState<Record<string, string>>({});
+  const [loadingPasswordIds, setLoadingPasswordIds] = useState<Record<string, boolean>>({});
+  const [copiedPasswordId, setCopiedPasswordId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -44,6 +57,10 @@ export default function ModelsPage({ openPanel }: Props) {
       const [p, s] = await Promise.all([listProviders(), listSubscriptions()]);
       setProviders(p);
       setSubs(s);
+      const epPairs = await Promise.all(
+        s.map((sub) => listEndpoints(sub.id).then((eps) => [sub.id, eps] as const).catch(() => [sub.id, [] as SubscriptionEndpoint[]] as const)),
+      );
+      setEndpointsBySub(Object.fromEntries(epPairs));
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
   }, []);
@@ -141,6 +158,68 @@ export default function ModelsPage({ openPanel }: Props) {
     }
   };
 
+  const fetchPassword = useCallback(async (id: string): Promise<string | null> => {
+    if (revealedPasswords[id] !== undefined) return revealedPasswords[id];
+    setLoadingPasswordIds((prev) => ({ ...prev, [id]: true }));
+    try {
+      const pw = await getSubscriptionPassword(id);
+      setRevealedPasswords((prev) => ({ ...prev, [id]: pw }));
+      return pw;
+    } catch {
+      toast.error("读取密码失败");
+      return null;
+    } finally {
+      setLoadingPasswordIds((prev) => ({ ...prev, [id]: false }));
+    }
+  }, [revealedPasswords]);
+
+  const handleTogglePassword = async (id: string) => {
+    if (revealedPasswords[id] !== undefined) {
+      setRevealedPasswords((prev) => {
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
+      return;
+    }
+    const pw = await fetchPassword(id);
+    if (!pw) {
+      setRevealedPasswords((prev) => {
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
+      toast.error("未保存密码");
+    }
+  };
+
+  const handleCopyPassword = async (id: string) => {
+    const pw = await fetchPassword(id);
+    if (!pw) {
+      toast.error("未保存密码");
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(pw);
+      setCopiedPasswordId(id);
+      window.setTimeout(() => {
+        setCopiedPasswordId((current) => (current === id ? null : current));
+      }, 1200);
+      toast.success("密码已复制");
+    } catch {
+      toast.error("复制密码失败");
+    }
+  };
+
+  const handleOpenAdmin = async (url: string) => {
+    if (!url?.trim()) return;
+    try {
+      await openExternalUrl(url);
+    } catch {
+      toast.error("无法打开链接，请检查地址或系统浏览器设置");
+    }
+  };
+
   if (loading) return <div style={{ display: "flex", height: "100%", alignItems: "center", justifyContent: "center" }}><p style={{ fontSize: 12, color: "var(--text-muted)" }}>加载中...</p></div>;
 
   return (
@@ -224,6 +303,12 @@ export default function ModelsPage({ openPanel }: Props) {
 
           {filtered.map((s) => {
             const pinned = isPinned(s.id);
+            const eps = endpointsBySub[s.id] ?? [];
+            const defaultEp = eps.find((e) => e.is_default) ?? eps[0];
+            const formatLabel = defaultEp?.api_format ?? s.api_format;
+            const otherFormats = Array.from(new Set(eps.map((e) => e.api_format))).filter((f) => f !== formatLabel);
+            const baseUrl = defaultEp?.base_url || s.base_url;
+            const modelLabel = defaultEp?.model || s.model;
             return (
               <div
                 key={s.id}
@@ -239,13 +324,73 @@ export default function ModelsPage({ openPanel }: Props) {
                 }}
               >
                 <div style={{ minWidth: 0 }}>
-                  <p style={{ color: "var(--text-primary)", fontWeight: 500 }}>{s.name}</p>
-                  <p style={{ color: "var(--text-muted)", fontSize: 10, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.model}</p>
+                  {s.admin_url?.trim() ? (
+                    <button
+                      type="button"
+                      onClick={() => void handleOpenAdmin(s.admin_url)}
+                      title={`打开官方管理页：${s.admin_url}`}
+                      style={subscriptionNameLinkStyle}
+                    >
+                      {s.name}
+                    </button>
+                  ) : (
+                    <p
+                      style={{ color: "var(--text-primary)", fontWeight: 500, margin: 0 }}
+                      title="在「编辑」中填写厂商后台地址后，点击套餐名可直达浏览器"
+                    >
+                      {s.name}
+                    </p>
+                  )}
+                  <p style={{ color: "var(--text-muted)", fontSize: 10, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{modelLabel}</p>
+                  {(s.username || s.has_password) && (
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4, flexWrap: "wrap" }}>
+                      {s.username && (
+                        <span style={portalText} title={`用户名：${s.username}`}>
+                          <User size={10} /> {s.username}
+                        </span>
+                      )}
+                      {s.has_password && (
+                        <span style={{ display: "inline-flex", alignItems: "center", gap: 2 }}>
+                          <span style={{ ...portalText, fontFamily: "ui-monospace, SFMono-Regular, monospace" }}>
+                            {revealedPasswords[s.id] !== undefined ? revealedPasswords[s.id] : "••••••"}
+                          </span>
+                          <button
+                            onClick={() => void handleTogglePassword(s.id)}
+                            disabled={!!loadingPasswordIds[s.id]}
+                            style={portalIconBtn(loadingPasswordIds[s.id])}
+                            title={revealedPasswords[s.id] !== undefined ? "隐藏密码" : "显示密码"}
+                          >
+                            {revealedPasswords[s.id] !== undefined ? <EyeOff size={10} /> : <Eye size={10} />}
+                          </button>
+                          <button
+                            onClick={() => void handleCopyPassword(s.id)}
+                            disabled={!!loadingPasswordIds[s.id]}
+                            style={portalIconBtn(loadingPasswordIds[s.id])}
+                            title="复制密码"
+                          >
+                            {copiedPasswordId === s.id ? <Check size={10} /> : <Copy size={10} />}
+                          </button>
+                        </span>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 <span style={{ color: "var(--text-secondary)" }}>{providerNameMap.get(s.provider_id) ?? s.provider_id}</span>
-                <span style={{ color: "var(--text-muted)", fontSize: 10, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.base_url || "-"}</span>
-                <span style={{ color: "var(--text-secondary)" }}>{s.api_format === "anthropic" ? "Anthropic" : "OpenAI"}</span>
+                <span style={{ color: "var(--text-muted)", fontSize: 10, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{baseUrl || "-"}</span>
+                <span style={{ color: "var(--text-secondary)" }}>
+                  {formatLabel === "anthropic" ? "Anthropic" : "OpenAI"}
+                  {otherFormats.length > 0 && (
+                    <span style={{ fontSize: 9, color: "var(--text-muted)", marginLeft: 4 }}>
+                      +{otherFormats.length}
+                    </span>
+                  )}
+                  {eps.length > 1 && (
+                    <span style={{ fontSize: 9, color: "var(--text-muted)", marginLeft: 4 }}>
+                      ({eps.length} 端点)
+                    </span>
+                  )}
+                </span>
 
                 <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
                   {s.is_active && (
@@ -256,19 +401,89 @@ export default function ModelsPage({ openPanel }: Props) {
                   {pinned && <span style={{ ...statusTagStyle, color: "var(--amber)" }}>置顶</span>}
                 </div>
 
-                <div style={{ display: "flex", gap: 2, justifyContent: "flex-start", flexWrap: "wrap" }}>
-                  <button onClick={() => togglePin(s.id)} style={{ ...actionBtnStyle, color: pinned ? "var(--amber)" : "var(--text-muted)" }}>
-                    <Pin size={11} style={{ verticalAlign: "middle" }} /> {pinned ? "取消置顶" : "置顶"}
+                <div style={{ display: "flex", gap: 6, alignItems: "center", justifyContent: "flex-start", flexWrap: "wrap" }}>
+                  <button
+                    type="button"
+                    onClick={() => openPanel("subscriptionForm", { id: s.id, subscription: s })}
+                    style={actionBtnStyle}
+                  >
+                    编辑
                   </button>
-                  {pinned && (
-                    <>
-                      <button onClick={() => movePin(s.id, "up")} style={actionBtnStyle}>上移</button>
-                      <button onClick={() => movePin(s.id, "down")} style={actionBtnStyle}>下移</button>
-                    </>
+                  {s.admin_url?.trim() && (
+                    <button
+                      type="button"
+                      onClick={() => void handleOpenAdmin(s.admin_url)}
+                      title={s.admin_url}
+                      style={{ ...actionBtnStyle, color: "var(--accent)" }}
+                    >
+                      后台
+                    </button>
                   )}
-                  <button onClick={() => openPanel("subscriptionForm", { id: s.id, subscription: s })} style={actionBtnStyle}>编辑</button>
-                  {!s.is_active && <button onClick={() => handleActivate(s.id)} style={{ ...actionBtnStyle, color: "var(--accent)" }}>设为默认</button>}
-                  <button onClick={() => handleDelete(s.id)} style={{ ...actionBtnStyle, color: "var(--red)" }}>删除</button>
+                  <DropdownMenu.Root>
+                    <DropdownMenu.Trigger asChild>
+                      <button type="button" style={moreTriggerStyle}>
+                        更多
+                        <ChevronDown size={12} style={{ opacity: 0.75 }} />
+                      </button>
+                    </DropdownMenu.Trigger>
+                    <DropdownMenu.Portal>
+                      <DropdownMenu.Content
+                        className="models-more-dropdown"
+                        sideOffset={4}
+                        align="end"
+                        style={moreMenuContentStyle}
+                      >
+                        <DropdownMenu.Item
+                          className="models-more-item"
+                          onSelect={() => togglePin(s.id)}
+                          style={moreMenuItemStyle}
+                        >
+                          <Pin size={12} style={{ flexShrink: 0 }} />
+                          {pinned ? "取消置顶" : "置顶"}
+                        </DropdownMenu.Item>
+                        {pinned && (
+                          <>
+                            <DropdownMenu.Item
+                              className="models-more-item"
+                              onSelect={() => movePin(s.id, "up")}
+                              style={moreMenuItemStyle}
+                            >
+                              上移
+                            </DropdownMenu.Item>
+                            <DropdownMenu.Item
+                              className="models-more-item"
+                              onSelect={() => movePin(s.id, "down")}
+                              style={moreMenuItemStyle}
+                            >
+                              下移
+                            </DropdownMenu.Item>
+                          </>
+                        )}
+                        {!s.is_active && (
+                          <DropdownMenu.Item
+                            className="models-more-item"
+                            onSelect={() => void handleActivate(s.id)}
+                            style={moreMenuItemStyle}
+                          >
+                            设为默认
+                          </DropdownMenu.Item>
+                        )}
+                        <DropdownMenu.Separator style={moreMenuSeparatorStyle} />
+                        <DropdownMenu.Item
+                          className="models-more-item"
+                          onSelect={() => {
+                            if (!window.confirm("确定删除该套餐？相关端点与工具预案会一并删除，且不可恢复。")) {
+                              return;
+                            }
+                            void handleDelete(s.id);
+                          }}
+                          style={{ ...moreMenuItemStyle, color: "var(--red)" }}
+                        >
+                          删除
+                        </DropdownMenu.Item>
+                      </DropdownMenu.Content>
+                    </DropdownMenu.Portal>
+                  </DropdownMenu.Root>
                 </div>
               </div>
             );
@@ -301,6 +516,42 @@ const actionBtnStyle: React.CSSProperties = {
   padding: "2px 6px", borderRadius: 4, color: "var(--text-muted)",
 };
 
+const moreTriggerStyle: React.CSSProperties = {
+  ...actionBtnStyle,
+  display: "inline-flex",
+  alignItems: "center",
+  gap: 3,
+};
+
+const moreMenuContentStyle: React.CSSProperties = {
+  minWidth: 160,
+  padding: 4,
+  borderRadius: 8,
+  border: "1px solid var(--border-primary)",
+  background: "var(--bg-secondary)",
+  boxShadow: "var(--shadow-menu)",
+  zIndex: 200,
+  fontSize: 11,
+  color: "var(--text-primary)",
+};
+
+const moreMenuItemStyle: React.CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  gap: 8,
+  padding: "8px 10px",
+  borderRadius: 4,
+  cursor: "pointer",
+  outline: "none",
+  color: "var(--text-secondary)",
+};
+
+const moreMenuSeparatorStyle: React.CSSProperties = {
+  height: 1,
+  margin: "4px 0",
+  background: "var(--border-primary)",
+};
+
 const statusTagStyle: React.CSSProperties = {
   fontSize: 9,
   color: "var(--accent)",
@@ -308,3 +559,39 @@ const statusTagStyle: React.CSSProperties = {
   padding: "1px 6px",
   borderRadius: 4,
 };
+
+const subscriptionNameLinkStyle: React.CSSProperties = {
+  display: "block",
+  width: "100%",
+  margin: 0,
+  padding: 0,
+  textAlign: "left",
+  font: "inherit",
+  fontWeight: 500,
+  color: "var(--accent)",
+  background: "none",
+  border: "none",
+  cursor: "pointer",
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
+};
+
+const portalText: React.CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  gap: 3,
+  fontSize: 10,
+  color: "var(--text-muted)",
+};
+
+const portalIconBtn = (disabled?: boolean): React.CSSProperties => ({
+  background: "none",
+  border: "none",
+  color: "var(--text-muted)",
+  padding: 1,
+  cursor: disabled ? "not-allowed" : "pointer",
+  opacity: disabled ? 0.5 : 1,
+  display: "inline-flex",
+  alignItems: "center",
+});

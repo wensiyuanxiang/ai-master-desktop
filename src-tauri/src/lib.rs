@@ -18,6 +18,7 @@ pub fn run() {
         .plugin(tauri_plugin_sql::Builder::default().build())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             let app_handle = app.handle().clone();
             db::init_db(&app_handle).expect("Failed to initialize database");
@@ -39,6 +40,12 @@ pub fn run() {
             commands::subscription::set_active_subscription,
             commands::subscription::get_active_subscription,
             commands::subscription::get_subscription_api_key,
+            commands::subscription::get_subscription_password,
+            commands::endpoint::list_endpoints,
+            commands::endpoint::create_endpoint,
+            commands::endpoint::update_endpoint,
+            commands::endpoint::delete_endpoint,
+            commands::endpoint::set_default_endpoint,
             commands::role::list_roles,
             commands::role::create_role,
             commands::role::update_role,
@@ -64,9 +71,20 @@ pub fn run() {
             commands::backup::delete_backup,
             commands::backup::export_backup,
             commands::backup::export_all_backups,
+            commands::tool_preset::list_tool_presets,
+            commands::tool_preset::render_tool_preset,
+            commands::tool_preset::apply_tool_preset,
+            commands::tool_preset::override_tool_preset,
+            commands::tool_preset::discard_preset_override,
+            commands::tool_preset::resync_subscription_presets,
+            commands::tool_preset::get_tool_active,
+            commands::tool_preset::list_tool_active_states,
+            commands::tool_preset::delete_tool_preset,
             commands::export_import::export_all_data,
             commands::export_import::import_all_data,
             commands::export_import::get_app_version,
+            commands::export::export_config_bundle,
+            commands::export::import_config_bundle,
             commands::tool_terminal::run_tool_terminal_command,
             commands::tool_terminal::write_tool_terminal_input,
             commands::tool_terminal::resize_tool_terminal,

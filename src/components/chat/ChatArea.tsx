@@ -2,8 +2,14 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import { Send, User, Bot, Folder, ChevronDown, Pin } from "lucide-react";
 import type { Message } from "@/types/message";
 import type { Role } from "@/types/role";
-import type { Subscription } from "@/types/subscription";
-import { listRoles, listSubscriptions, updateConversation, getConversation } from "@/lib/tauri";
+import type { Subscription, SubscriptionEndpoint } from "@/types/subscription";
+import {
+  listRoles,
+  listSubscriptions,
+  updateConversation,
+  getConversation,
+  listEndpoints,
+} from "@/lib/tauri";
 import { SUBSCRIPTIONS_CHANGED_EVENT } from "@/lib/subscriptionEvents";
 import { notifyChatSessionSubscription } from "@/lib/chatStatusEvents";
 import { toast } from "sonner";
@@ -12,17 +18,28 @@ interface Props {
   messages: Message[];
   streamingText: string;
   isStreaming: boolean;
-  onSend: (content: string, roleId: string | null, subscriptionId: string | null) => void;
+  onSend: (
+    content: string,
+    roleId: string | null,
+    subscriptionId: string | null,
+    endpointId: string | null,
+  ) => void;
   activeConversationId: string | null;
   onSelectConversation: () => void;
 }
 
+type SubWithEndpoints = {
+  sub: Subscription;
+  endpoints: SubscriptionEndpoint[];
+};
+
 export default function ChatArea({ messages, streamingText, isStreaming, onSend, activeConversationId, onSelectConversation }: Props) {
   const [input, setInput] = useState("");
   const [roles, setRoles] = useState<Role[]>([]);
-  const [subs, setSubs] = useState<Subscription[]>([]);
+  const [subs, setSubs] = useState<SubWithEndpoints[]>([]);
   const [selectedRole, setSelectedRole] = useState<string | null>(null);
   const [selectedSub, setSelectedSub] = useState<string | null>(null);
+  const [selectedEndpoint, setSelectedEndpoint] = useState<string | null>(null);
   const [workingDir, setWorkingDir] = useState("~");
   const [showRoles, setShowRoles] = useState(false);
   const [showModels, setShowModels] = useState(false);
@@ -32,16 +49,50 @@ export default function ChatArea({ messages, streamingText, isStreaming, onSend,
     listRoles().then(setRoles).catch(() => {});
   }, []);
 
+  const notifyStatus = useCallback(
+    (list: SubWithEndpoints[], subId: string | null, endpointId: string | null) => {
+      if (!subId) {
+        notifyChatSessionSubscription(null);
+        return;
+      }
+      const entry = list.find((x) => x.sub.id === subId);
+      if (!entry) {
+        notifyChatSessionSubscription(null);
+        return;
+      }
+      const ep =
+        entry.endpoints.find((e) => e.id === endpointId) ??
+        entry.endpoints.find((e) => e.is_default) ??
+        entry.endpoints[0];
+      notifyChatSessionSubscription({
+        name: entry.sub.name,
+        model: ep?.model || entry.sub.model,
+        apiFormat: (ep?.api_format ?? (entry.sub.api_format as "openai" | "anthropic")) as
+          | "openai"
+          | "anthropic",
+      });
+    },
+    [],
+  );
+
   const refreshSubsAndSyncConversation = useCallback(async () => {
-    const list = await listSubscriptions().catch(() => [] as Subscription[]);
-    setSubs(list);
-    const activeDefault = list.find((s) => s.is_active)?.id ?? null;
+    const raw = await listSubscriptions().catch(() => [] as Subscription[]);
+    const withEps: SubWithEndpoints[] = await Promise.all(
+      raw.map(async (s) => ({
+        sub: s,
+        endpoints: await listEndpoints(s.id).catch(() => [] as SubscriptionEndpoint[]),
+      })),
+    );
+    setSubs(withEps);
+    const activeDefault = withEps.find((x) => x.sub.is_active)?.sub.id ?? null;
     if (!activeConversationId) {
       setSelectedSub(activeDefault);
-      notifyChatSessionSubscription(null);
+      setSelectedEndpoint(null);
+      notifyStatus(withEps, activeDefault, null);
       return;
     }
     let effectiveSubId: string | null = activeDefault;
+    let effectiveEndpoint: string | null = null;
     try {
       const conv = await getConversation(activeConversationId);
       const bound =
@@ -49,21 +100,19 @@ export default function ChatArea({ messages, streamingText, isStreaming, onSend,
           ? conv.subscription_id
           : null;
       effectiveSubId = bound || activeDefault;
+      effectiveEndpoint =
+        conv.endpoint_id && conv.endpoint_id.trim() !== "" ? conv.endpoint_id : null;
       setSelectedSub(effectiveSubId);
+      setSelectedEndpoint(effectiveEndpoint);
       setSelectedRole(conv.role_id);
       setWorkingDir(conv.working_directory?.trim() ? conv.working_directory : "~");
     } catch {
       setSelectedSub(activeDefault);
+      setSelectedEndpoint(null);
       effectiveSubId = activeDefault;
     }
-    if (effectiveSubId) {
-      const sub = list.find((s) => s.id === effectiveSubId);
-      if (sub) notifyChatSessionSubscription({ name: sub.name, model: sub.model });
-      else notifyChatSessionSubscription(null);
-    } else {
-      notifyChatSessionSubscription(null);
-    }
-  }, [activeConversationId]);
+    notifyStatus(withEps, effectiveSubId, effectiveEndpoint);
+  }, [activeConversationId, notifyStatus]);
 
   useEffect(() => {
     void refreshSubsAndSyncConversation();
@@ -81,21 +130,30 @@ export default function ChatArea({ messages, streamingText, isStreaming, onSend,
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, streamingText]);
 
-  // Persist model selection to conversation
-  const handleModelSelect = useCallback(async (subId: string) => {
-    setSelectedSub(subId);
-    setShowModels(false);
-    if (activeConversationId) {
-      try {
-        await updateConversation(activeConversationId, { subscription_id: subId });
-        const list = await listSubscriptions().catch(() => [] as Subscription[]);
-        const sub = list.find((s) => s.id === subId);
-        if (sub) notifyChatSessionSubscription({ name: sub.name, model: sub.model });
-      } catch {
-        toast.error("切换模型失败，请重试");
+  // Persist model selection (subscription + endpoint) to conversation. Passing endpointId =
+  // null means "use the subscription's default endpoint" and is recorded as an empty string
+  // server-side so the endpoint binding is cleared explicitly.
+  const handleModelSelect = useCallback(
+    async (subId: string, endpointId: string | null) => {
+      setSelectedSub(subId);
+      setSelectedEndpoint(endpointId);
+      setShowModels(false);
+      if (activeConversationId) {
+        try {
+          await updateConversation(activeConversationId, {
+            subscription_id: subId,
+            endpoint_id: endpointId ?? "",
+          });
+          notifyStatus(subs, subId, endpointId);
+        } catch {
+          toast.error("切换模型失败，请重试");
+        }
+      } else {
+        notifyStatus(subs, subId, endpointId);
       }
-    }
-  }, [activeConversationId]);
+    },
+    [activeConversationId, notifyStatus, subs],
+  );
 
   // Persist role selection to conversation
   const handleRoleSelect = useCallback(async (roleId: string | null) => {
@@ -120,7 +178,7 @@ export default function ChatArea({ messages, streamingText, isStreaming, onSend,
 
   const handleSend = () => {
     if (!input.trim() || isStreaming) return;
-    onSend(input.trim(), selectedRole, selectedSub);
+    onSend(input.trim(), selectedRole, selectedSub, selectedEndpoint);
     setInput("");
   };
 
@@ -140,7 +198,13 @@ export default function ChatArea({ messages, streamingText, isStreaming, onSend,
   };
 
   const selectedRoleObj = roles.find((r) => r.id === selectedRole);
-  const selectedSubObj = subs.find((s) => s.id === selectedSub);
+  const selectedEntry = subs.find((s) => s.sub.id === selectedSub) ?? null;
+  const selectedSubObj = selectedEntry?.sub ?? null;
+  const selectedEndpointObj =
+    selectedEntry?.endpoints.find((e) => e.id === selectedEndpoint) ??
+    selectedEntry?.endpoints.find((e) => e.is_default) ??
+    selectedEntry?.endpoints[0] ??
+    null;
 
   if (!activeConversationId) {
     return (
@@ -257,36 +321,95 @@ export default function ChatArea({ messages, streamingText, isStreaming, onSend,
           <div style={{ position: "relative" }}>
             <button
               onClick={() => { setShowModels(!showModels); setShowRoles(false); }}
-              style={{ display: "flex", alignItems: "center", gap: 4, padding: "4px 8px", borderRadius: 4, border: "1px solid var(--border-primary)", background: "var(--bg-tertiary)", color: "var(--text-secondary)", fontSize: 11, cursor: "pointer", maxWidth: 220 }}
+              style={{ display: "flex", alignItems: "center", gap: 4, padding: "4px 8px", borderRadius: 4, border: "1px solid var(--border-primary)", background: "var(--bg-tertiary)", color: "var(--text-secondary)", fontSize: 11, cursor: "pointer", maxWidth: 260 }}
             >
               <Bot size={12} />
               <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                {selectedSubObj?.model || selectedSubObj?.name || "模型"}
+                {selectedSubObj
+                  ? `${selectedSubObj.name} · ${selectedEndpointObj?.api_format === "anthropic" ? "Anthropic" : "OpenAI"}`
+                  : "模型"}
               </span>
               <ChevronDown size={10} />
             </button>
             {showModels && (
               <>
                 <div style={{ position: "fixed", inset: 0, zIndex: 99 }} onClick={() => setShowModels(false)} />
-                <div style={{ position: "absolute", bottom: "100%", left: 0, marginBottom: 4, width: 280, maxHeight: 240, overflowY: "auto", background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 8, zIndex: 100, boxShadow: "var(--shadow-popover)" }}>
-                  {subs.map((s) => (
-                    <button
-                      key={s.id}
-                      onClick={() => handleModelSelect(s.id)}
-                      style={{
-                        width: "100%", textAlign: "left", padding: "7px 10px", fontSize: 11,
-                        color: selectedSub === s.id ? "var(--accent)" : "var(--text-secondary)",
-                        background: selectedSub === s.id ? "var(--accent-bg)" : "none",
-                        border: "none", cursor: "pointer",
-                        display: "flex", justifyContent: "space-between", alignItems: "center",
-                      }}
-                      onMouseEnter={hoverBg}
-                      onMouseLeave={resetBg}
-                    >
-                      <span>{s.name}</span>
-                      <span style={{ color: "var(--text-muted)", fontSize: 10 }}>{s.model}</span>
-                    </button>
-                  ))}
+                <div style={{ position: "absolute", bottom: "100%", left: 0, marginBottom: 4, width: 320, maxHeight: 320, overflowY: "auto", background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 8, zIndex: 100, boxShadow: "var(--shadow-popover)" }}>
+                  {subs.length === 0 && (
+                    <div style={{ padding: "10px", fontSize: 11, color: "var(--text-muted)" }}>
+                      还没有套餐，去[模型管理]添加
+                    </div>
+                  )}
+                  {subs.map(({ sub, endpoints }) => {
+                    const eps = endpoints.length > 0
+                      ? endpoints
+                      : ([
+                          {
+                            id: "",
+                            subscription_id: sub.id,
+                            api_format: (sub.api_format as "openai" | "anthropic") ?? "openai",
+                            base_url: sub.base_url,
+                            model: sub.model,
+                            is_default: true,
+                            created_at: "",
+                            updated_at: "",
+                          },
+                        ] as SubscriptionEndpoint[]);
+                    return (
+                      <div key={sub.id} style={{ borderBottom: "1px solid var(--border-primary)" }}>
+                        <div style={{ padding: "6px 10px 2px", fontSize: 10, color: "var(--text-muted)", background: "var(--bg-tertiary)" }}>
+                          {sub.name}
+                        </div>
+                        {eps.map((ep) => {
+                          const active =
+                            selectedSub === sub.id &&
+                            (selectedEndpoint === ep.id ||
+                              (!selectedEndpoint && ep.is_default));
+                          return (
+                            <button
+                              key={ep.id || `${sub.id}-legacy`}
+                              onClick={() => handleModelSelect(sub.id, ep.id || null)}
+                              style={{
+                                width: "100%",
+                                textAlign: "left",
+                                padding: "7px 12px",
+                                fontSize: 11,
+                                color: active ? "var(--accent)" : "var(--text-secondary)",
+                                background: active ? "var(--accent-bg)" : "none",
+                                border: "none",
+                                cursor: "pointer",
+                                display: "flex",
+                                justifyContent: "space-between",
+                                alignItems: "center",
+                                gap: 6,
+                              }}
+                              onMouseEnter={hoverBg}
+                              onMouseLeave={resetBg}
+                            >
+                              <span style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+                                <span style={{
+                                  fontSize: 9,
+                                  padding: "1px 5px",
+                                  borderRadius: 3,
+                                  background: ep.api_format === "anthropic" ? "var(--accent-bg)" : "var(--bg-tertiary)",
+                                  color: ep.api_format === "anthropic" ? "var(--accent)" : "var(--text-secondary)",
+                                  flexShrink: 0,
+                                }}>
+                                  {ep.api_format === "anthropic" ? "ANT" : "OAI"}
+                                </span>
+                                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                  {ep.model || "(无默认模型)"}
+                                </span>
+                                {ep.is_default && (
+                                  <span style={{ fontSize: 9, color: "var(--text-muted)" }}>默认</span>
+                                )}
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    );
+                  })}
                 </div>
               </>
             )}

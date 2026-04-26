@@ -4,8 +4,9 @@ import { Eye, EyeOff, Copy, Check } from "lucide-react";
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
-import { detectToolConfigs, runToolTerminalCommand, readConfigFile, writeToolTerminalInput, resizeToolTerminal, closeToolTerminal } from "@/lib/tauri";
+import { detectToolConfigs, runToolTerminalCommand, readConfigFile, writeToolTerminalInput, resizeToolTerminal, closeToolTerminal, listToolActiveStates } from "@/lib/tauri";
 import type { ToolConfigInfo } from "@/types/backup";
+import type { ToolActiveStateView } from "@/types/toolPreset";
 import { toast } from "sonner";
 
 interface Props {
@@ -14,6 +15,7 @@ interface Props {
 
 export default function ToolsPage({ openPanel }: Props) {
   const [tools, setTools] = useState<ToolConfigInfo[]>([]);
+  const [activeStates, setActiveStates] = useState<Record<string, ToolActiveStateView>>({});
   const [loading, setLoading] = useState(true);
   const [terminalOpen, setTerminalOpen] = useState(false);
   const [terminalHeight, setTerminalHeight] = useState(220);
@@ -34,7 +36,34 @@ export default function ToolsPage({ openPanel }: Props) {
   const startHeightRef = useRef(220);
 
   useEffect(() => {
-    detectToolConfigs().then(setTools).catch(() => {}).finally(() => setLoading(false));
+    let cancelled = false;
+    let unlisten: (() => void) | null = null;
+    const reload = async () => {
+      const [toolList, states] = await Promise.all([
+        detectToolConfigs().catch(() => [] as ToolConfigInfo[]),
+        listToolActiveStates().catch(() => [] as ToolActiveStateView[]),
+      ]);
+      if (cancelled) return;
+      setTools(toolList);
+      const map: Record<string, ToolActiveStateView> = {};
+      for (const s of states) map[s.tool_name] = s;
+      setActiveStates(map);
+    };
+    reload().finally(() => {
+      if (!cancelled) setLoading(false);
+    });
+    listen("tool-preset-resynced", () => {
+      void reload();
+    })
+      .then((fn) => {
+        if (cancelled) fn();
+        else unlisten = fn;
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
   }, []);
 
   useEffect(() => {
@@ -271,11 +300,38 @@ export default function ToolsPage({ openPanel }: Props) {
                 </div>
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                {tool.current_subscription_name && (
-                  <span style={{ fontSize: 10, color: "var(--green)", background: "var(--success-bg)", padding: "2px 8px", borderRadius: 4 }}>
-                    {tool.current_subscription_name}
-                  </span>
-                )}
+                {(() => {
+                  const state = activeStates[tool.tool_name];
+                  if (state?.active_subscription_name) {
+                    const label = state.active_endpoint_label
+                      ? `${state.active_subscription_name} · ${state.active_endpoint_label}`
+                      : state.active_subscription_name;
+                    return (
+                      <span
+                        title={state.in_sync ? "预案与生效配置同步" : "预案与生效配置已不同步"}
+                        style={{
+                          fontSize: 10,
+                          color: state.in_sync ? "var(--green)" : "var(--orange,#d97706)",
+                          background: state.in_sync ? "var(--success-bg)" : "transparent",
+                          border: state.in_sync ? "none" : "1px solid var(--orange,#d97706)",
+                          padding: "2px 8px",
+                          borderRadius: 4,
+                        }}
+                      >
+                        {label}
+                        {state.preset_overridden && " · override"}
+                      </span>
+                    );
+                  }
+                  if (tool.current_subscription_name) {
+                    return (
+                      <span style={{ fontSize: 10, color: "var(--text-muted)", background: "var(--bg-tertiary)", padding: "2px 8px", borderRadius: 4 }}>
+                        {tool.current_subscription_name} · 未托管
+                      </span>
+                    );
+                  }
+                  return null;
+                })()}
                 {!tool.exists && <span style={{ fontSize: 10, color: "var(--text-muted)" }}>未检测到</span>}
                 <button
                   onClick={() => void handleLaunchTool(tool)}

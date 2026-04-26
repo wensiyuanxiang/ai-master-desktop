@@ -1,5 +1,6 @@
 use crate::db;
 use crate::error::AppResult;
+use crate::services::config_file::{insert_backup, BackupRefs};
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
 
@@ -11,7 +12,12 @@ pub struct ConfigBackup {
     pub file_path: String,
     pub checksum: String,
     pub created_at: String,
+    pub subscription_id: Option<String>,
+    pub endpoint_id: Option<String>,
+    pub preset_id: Option<String>,
 }
+
+const SELECT_FIELDS: &str = "id, tool_name, subscription_name, file_path, checksum, created_at, subscription_id, endpoint_id, preset_id";
 
 fn row_to_backup(row: &rusqlite::Row) -> rusqlite::Result<ConfigBackup> {
     Ok(ConfigBackup {
@@ -21,6 +27,9 @@ fn row_to_backup(row: &rusqlite::Row) -> rusqlite::Result<ConfigBackup> {
         file_path: row.get(3)?,
         checksum: row.get(4)?,
         created_at: row.get(5)?,
+        subscription_id: row.get(6)?,
+        endpoint_id: row.get(7)?,
+        preset_id: row.get(8)?,
     })
 }
 
@@ -32,18 +41,20 @@ pub fn list_backups(
     let conn = db::open_connection(&app_handle)?;
 
     if let Some(ref _tn) = tool_name {
-        let mut stmt = conn.prepare(
-            "SELECT id, tool_name, subscription_name, file_path, checksum, created_at \
-             FROM config_backups WHERE tool_name = ?1 ORDER BY created_at DESC"
-        )?;
+        let sql = format!(
+            "SELECT {} FROM config_backups WHERE tool_name = ?1 ORDER BY created_at DESC",
+            SELECT_FIELDS
+        );
+        let mut stmt = conn.prepare(&sql)?;
         Ok(stmt
             .query_map([_tn.as_str()], row_to_backup)?
             .collect::<Result<Vec<_>, _>>()?)
     } else {
-        let mut stmt = conn.prepare(
-            "SELECT id, tool_name, subscription_name, file_path, checksum, created_at \
-             FROM config_backups ORDER BY created_at DESC"
-        )?;
+        let sql = format!(
+            "SELECT {} FROM config_backups ORDER BY created_at DESC",
+            SELECT_FIELDS
+        );
+        let mut stmt = conn.prepare(&sql)?;
         Ok(stmt
             .query_map([], row_to_backup)?
             .collect::<Result<Vec<_>, _>>()?)
@@ -62,13 +73,14 @@ pub fn restore_backup(app_handle: tauri::AppHandle, id: String) -> AppResult<()>
     // Backup current config before restoring
     if let Ok(current) = std::fs::read_to_string(&file_path) {
         let checksum = format!("{:x}", sha2::Sha256::digest(current.as_bytes()));
-        crate::services::config_file::insert_backup(
+        insert_backup(
             &conn,
             &_tool_name,
             "pre-restore",
             &file_path,
             &current,
             &checksum,
+            &BackupRefs::empty(),
         )?;
     }
 

@@ -8,6 +8,7 @@ pub struct Conversation {
     pub id: String,
     pub title: String,
     pub subscription_id: Option<String>,
+    pub endpoint_id: Option<String>,
     pub role_id: Option<String>,
     pub working_directory: String,
     pub created_at: String,
@@ -17,19 +18,24 @@ pub struct Conversation {
 #[derive(Debug, Deserialize)]
 pub struct CreateConversationInput {
     pub subscription_id: Option<String>,
+    pub endpoint_id: Option<String>,
     pub role_id: Option<String>,
     pub working_directory: Option<String>,
 }
+
+const SELECT_FIELDS: &str =
+    "id, title, subscription_id, endpoint_id, role_id, working_directory, created_at, updated_at";
 
 fn row_to_conversation(row: &rusqlite::Row) -> rusqlite::Result<Conversation> {
     Ok(Conversation {
         id: row.get(0)?,
         title: row.get(1)?,
         subscription_id: row.get(2)?,
-        role_id: row.get(3)?,
-        working_directory: row.get(4)?,
-        created_at: row.get(5)?,
-        updated_at: row.get(6)?,
+        endpoint_id: row.get(3)?,
+        role_id: row.get(4)?,
+        working_directory: row.get(5)?,
+        created_at: row.get(6)?,
+        updated_at: row.get(7)?,
     })
 }
 
@@ -39,10 +45,7 @@ pub fn list_conversations(
     search: Option<String>,
 ) -> AppResult<Vec<Conversation>> {
     let conn = db::open_connection(&app_handle)?;
-    let mut sql = String::from(
-        "SELECT id, title, subscription_id, role_id, working_directory, created_at, updated_at \
-         FROM conversations WHERE 1=1"
-    );
+    let mut sql = format!("SELECT {} FROM conversations WHERE 1=1", SELECT_FIELDS);
     let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
 
     if let Some(ref s) = search {
@@ -71,15 +74,13 @@ pub fn create_conversation(
     let working_directory = input.working_directory.unwrap_or_default();
 
     conn.execute(
-        "INSERT INTO conversations (id, title, subscription_id, role_id, working_directory) \
-         VALUES (?1, 'New Chat', ?2, ?3, ?4)",
-        rusqlite::params![id, input.subscription_id, input.role_id, working_directory],
+        "INSERT INTO conversations (id, title, subscription_id, endpoint_id, role_id, working_directory) \
+         VALUES (?1, 'New Chat', ?2, ?3, ?4, ?5)",
+        rusqlite::params![id, input.subscription_id, input.endpoint_id, input.role_id, working_directory],
     )?;
 
-    let mut stmt = conn.prepare(
-        "SELECT id, title, subscription_id, role_id, working_directory, created_at, updated_at \
-         FROM conversations WHERE id = ?1"
-    )?;
+    let sql = format!("SELECT {} FROM conversations WHERE id = ?1", SELECT_FIELDS);
+    let mut stmt = conn.prepare(&sql)?;
     let convo = stmt.query_row([&id], row_to_conversation)?;
     Ok(convo)
 }
@@ -87,10 +88,8 @@ pub fn create_conversation(
 #[tauri::command]
 pub fn get_conversation(app_handle: tauri::AppHandle, id: String) -> AppResult<Conversation> {
     let conn = db::open_connection(&app_handle)?;
-    let mut stmt = conn.prepare(
-        "SELECT id, title, subscription_id, role_id, working_directory, created_at, updated_at \
-         FROM conversations WHERE id = ?1"
-    )?;
+    let sql = format!("SELECT {} FROM conversations WHERE id = ?1", SELECT_FIELDS);
+    let mut stmt = conn.prepare(&sql)?;
     let convo = stmt.query_row([&id], row_to_conversation)?;
     Ok(convo)
 }
@@ -101,6 +100,7 @@ pub fn update_conversation(
     id: String,
     title: Option<String>,
     subscription_id: Option<String>,
+    endpoint_id: Option<String>,
     role_id: Option<String>,
     working_directory: Option<String>,
 ) -> AppResult<Conversation> {
@@ -118,6 +118,14 @@ pub fn update_conversation(
             rusqlite::params![sid, id],
         )?;
     }
+    if let Some(ref eid) = endpoint_id {
+        // Empty string clears the binding so chat reverts to the subscription's default endpoint.
+        let value: Option<&str> = if eid.is_empty() { None } else { Some(eid.as_str()) };
+        conn.execute(
+            "UPDATE conversations SET endpoint_id = ?1, updated_at = datetime('now') WHERE id = ?2",
+            rusqlite::params![value, id],
+        )?;
+    }
     if let Some(ref rid) = role_id {
         conn.execute(
             "UPDATE conversations SET role_id = ?1, updated_at = datetime('now') WHERE id = ?2",
@@ -131,10 +139,8 @@ pub fn update_conversation(
         )?;
     }
 
-    let mut stmt = conn.prepare(
-        "SELECT id, title, subscription_id, role_id, working_directory, created_at, updated_at \
-         FROM conversations WHERE id = ?1"
-    )?;
+    let sql = format!("SELECT {} FROM conversations WHERE id = ?1", SELECT_FIELDS);
+    let mut stmt = conn.prepare(&sql)?;
     let convo = stmt.query_row([&id], row_to_conversation)?;
     Ok(convo)
 }
@@ -147,10 +153,8 @@ pub fn rename_conversation(app_handle: tauri::AppHandle, id: String, title: Stri
         rusqlite::params![title, id],
     )?;
 
-    let mut stmt = conn.prepare(
-        "SELECT id, title, subscription_id, role_id, working_directory, created_at, updated_at \
-         FROM conversations WHERE id = ?1"
-    )?;
+    let sql = format!("SELECT {} FROM conversations WHERE id = ?1", SELECT_FIELDS);
+    let mut stmt = conn.prepare(&sql)?;
     let convo = stmt.query_row([&id], row_to_conversation)?;
     Ok(convo)
 }

@@ -1,3 +1,4 @@
+use crate::commands::endpoint;
 use crate::db;
 use crate::error::{AppError, AppResult};
 use crate::services::AppState;
@@ -56,6 +57,7 @@ pub async fn send_message(
     content: String,
     role_id: Option<String>,
     subscription_id: Option<String>,
+    endpoint_id: Option<String>,
 ) -> AppResult<()> {
     // Save user message synchronously
     let ctx = {
@@ -70,11 +72,11 @@ pub async fn send_message(
             rusqlite::params![conversation_id],
         )?;
 
-        let conv_subscription_id: Option<String> = conn
+        let (conv_subscription_id, conv_endpoint_id): (Option<String>, Option<String>) = conn
             .query_row(
-                "SELECT subscription_id FROM conversations WHERE id = ?1",
+                "SELECT subscription_id, endpoint_id FROM conversations WHERE id = ?1",
                 [&conversation_id],
-                |row| row.get::<_, Option<String>>(0),
+                |row| Ok((row.get::<_, Option<String>>(0)?, row.get::<_, Option<String>>(1)?)),
             )?;
 
         let from_client = subscription_id
@@ -100,13 +102,50 @@ pub async fn send_message(
             }
         }
 
+        let from_client_endpoint = endpoint_id
+            .as_ref()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+
+        let resolved_endpoint_id = from_client_endpoint
+            .clone()
+            .or_else(|| {
+                conv_endpoint_id
+                    .clone()
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+            });
+
+        if let Some(ref eid) = from_client_endpoint {
+            if conv_endpoint_id.as_deref() != Some(eid.as_str()) {
+                conn.execute(
+                    "UPDATE conversations SET endpoint_id = ?1, updated_at = datetime('now') WHERE id = ?2",
+                    rusqlite::params![eid, conversation_id],
+                )?;
+            }
+        }
+
         let subscription_id = resolved_subscription_id;
 
-        let (api_key_encrypted, base_url, model, api_format): (String, String, String, String) = conn.query_row(
+        // Prefer the resolved endpoint's (api_format, base_url, model) over the legacy
+        // single-endpoint columns on `subscriptions`. The latter remains as a safety net for
+        // databases that haven't been backfilled or for endpoints that were just deleted.
+        let endpoint_resolved = endpoint::resolve_endpoint(
+            &conn,
+            &subscription_id,
+            resolved_endpoint_id.as_deref(),
+        )?;
+
+        let (api_key_encrypted, sub_base_url, sub_model, sub_format): (String, String, String, String) = conn.query_row(
             "SELECT api_key_encrypted, base_url, model, api_format FROM subscriptions WHERE id = ?1",
             [&subscription_id],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         )?;
+
+        let (base_url, model, api_format) = match endpoint_resolved {
+            Some(ep) => (ep.base_url, ep.model, ep.api_format),
+            None => (sub_base_url, sub_model, sub_format),
+        };
 
         let api_key = crate::services::crypto::decrypt(&api_key_encrypted, &state.crypto_key)?;
 

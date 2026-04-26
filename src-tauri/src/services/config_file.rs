@@ -185,17 +185,29 @@ pub fn apply_partial(
     serde_json::to_string_pretty(&json).map_err(AppError::Serialization)
 }
 
+pub struct BackupRefs<'a> {
+    pub subscription_id: Option<&'a str>,
+    pub endpoint_id: Option<&'a str>,
+    pub preset_id: Option<&'a str>,
+}
+
+impl<'a> BackupRefs<'a> {
+    pub fn empty() -> Self {
+        Self { subscription_id: None, endpoint_id: None, preset_id: None }
+    }
+}
+
 pub fn write_config_and_backup(
     app_handle: &tauri::AppHandle,
     tool_name: &str,
     subscription_name: &str,
-    subscription_id: Option<&str>,
+    refs: &BackupRefs<'_>,
     content: &str,
 ) -> AppResult<String> {
     let path = resolve_path(tool_name)?;
 
     if tool_name == "claude_code" {
-        if let Some(sid) = subscription_id {
+        if let Some(sid) = refs.subscription_id {
             // 1) Canonical copy for this 套餐
             let pkg = claude_package_path(sid)?;
             if let Some(parent) = pkg.parent() {
@@ -243,7 +255,15 @@ pub fn write_config_and_backup(
         let current = std::fs::read_to_string(&path)?;
         let checksum = format!("{:x}", sha2::Sha256::digest(current.as_bytes()));
         let conn = db::open_connection(app_handle)?;
-        insert_backup(&conn, tool_name, subscription_name, &path.to_string_lossy(), &current, &checksum)?;
+        insert_backup(
+            &conn,
+            tool_name,
+            subscription_name,
+            &path.to_string_lossy(),
+            &current,
+            &checksum,
+            refs,
+        )?;
     }
 
     if let Some(parent) = path.parent() {
@@ -261,12 +281,23 @@ pub fn insert_backup(
     file_path: &str,
     content: &str,
     checksum: &str,
+    refs: &BackupRefs<'_>,
 ) -> AppResult<()> {
     let id = Uuid::new_v4().to_string();
     conn.execute(
-        "INSERT INTO config_backups (id, tool_name, subscription_name, file_path, content, checksum) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-        rusqlite::params![id, tool_name, subscription_name, file_path, content, checksum],
+        "INSERT INTO config_backups (id, tool_name, subscription_name, file_path, content, checksum, subscription_id, endpoint_id, preset_id) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        rusqlite::params![
+            id,
+            tool_name,
+            subscription_name,
+            file_path,
+            content,
+            checksum,
+            refs.subscription_id,
+            refs.endpoint_id,
+            refs.preset_id,
+        ],
     )?;
     Ok(())
 }

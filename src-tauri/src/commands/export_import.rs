@@ -66,15 +66,18 @@ pub fn import_all_data(app_handle: tauri::AppHandle, file_path: String) -> AppRe
     for s in &data.subscriptions {
         conn.execute(
             "INSERT OR REPLACE INTO subscriptions (id, provider_id, name, api_key_encrypted, base_url, \
-             model, start_date, end_date, is_active, created_at, updated_at) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+             model, start_date, end_date, is_active, created_at, updated_at, admin_url, username, password_encrypted) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
             rusqlite::params![
                 s["id"].as_str().unwrap_or(""), s["provider_id"].as_str().unwrap_or(""),
                 s["name"].as_str().unwrap_or(""), s["api_key_encrypted"].as_str().unwrap_or(""),
                 s["base_url"].as_str().unwrap_or(""), s["model"].as_str().unwrap_or(""),
                 s["start_date"].as_str().unwrap_or(""), s["end_date"].as_str().unwrap_or(""),
                 s["is_active"].as_str().unwrap_or("0"), s["created_at"].as_str().unwrap_or(""),
-                s["updated_at"].as_str().unwrap_or("")
+                s["updated_at"].as_str().unwrap_or(""),
+                s["admin_url"].as_str().unwrap_or(""),
+                s["username"].as_str().unwrap_or(""),
+                s["password_encrypted"].as_str().unwrap_or("")
             ],
         )?;
         result.subscriptions_imported += 1;
